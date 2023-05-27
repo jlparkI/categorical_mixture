@@ -6,7 +6,7 @@ from multiprocessing import Pool
 import numpy as np
 try:
     import ray
-    from ray_wrapper import ray_caller
+    from ray_wrapper import _ray_caller
 except:
     print("ray not installed! fitting with ray will not be an option.")
 
@@ -493,7 +493,7 @@ class MultinoulliMixture:
 
         for i in range(max_iter):
             prev_loss = copy.copy(loss)
-            futures = [ray_caller.remote(xchunk, mix_weights, mu_mix) for xchunk in xchunks]
+            futures = [_ray_caller.remote(xchunk, mix_weights, mu_mix) for xchunk in xchunks]
             mp_res = ray.get(futures)
 
             mix_weights = np.zeros(mp_res[0][0].shape)
