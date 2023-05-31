@@ -19,3 +19,14 @@ it's sufficiently different from the training set
 that model predictions for this new datapoint are
 likely not useful. We'll see how to determine
 when we should not make a cluster assignment shortly.
+
+If you have a fitted model called `my_model`, you can
+do the following:
+
+
+Calculating overall probability
+-------------------------------
+
+:::
+
+  my_model.:

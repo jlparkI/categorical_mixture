@@ -6,5 +6,5 @@ be as easy as typing:::
 
   pip install multinomial_mixture
 
-which will try to use a C++ compiler on your machine. If you encounter
+which will compile the package from source on your machine. If you encounter
 any errors, please report at the project github page.
