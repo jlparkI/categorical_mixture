@@ -1,21 +1,21 @@
-multinoulli\_mixture package
+categorical\_mixture package
 ============================
 
 Submodules
 ----------
 
-multinoulli\_mixture.multinoulli\_mix module
+categorical\_mixture.categorical\_mix module
 --------------------------------------------
 
-.. automodule:: multinoulli_mixture.multinoulli_mix
+.. automodule:: categorical_mixture.categorical_mix
    :members:
    :undoc-members:
    :show-inheritance:
 
-multinoulli\_mixture.ray\_wrapper module
+categorical\_mixture.ray\_wrapper module
 ----------------------------------------
 
-.. automodule:: multinoulli_mixture.ray_wrapper
+.. automodule:: categorical_mixture.ray_wrapper
    :members:
    :undoc-members:
    :show-inheritance:
@@ -23,7 +23,7 @@ multinoulli\_mixture.ray\_wrapper module
 Module contents
 ---------------
 
-.. automodule:: multinoulli_mixture
+.. automodule:: categorical_mixture
    :members:
    :undoc-members:
    :show-inheritance:

@@ -1,7 +1,7 @@
-multinoulli_mixture
+categorical_mixture
 ===================
 
 .. toctree::
    :maxdepth: 4
 
-   multinoulli_mixture
+   categorical_mixture

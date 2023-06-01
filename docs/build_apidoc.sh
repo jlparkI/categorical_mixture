@@ -1,3 +1,3 @@
 #!/bin/bash
 
-sphinx-apidoc -o source ../multinoulli_mixture
+sphinx-apidoc -o source ../categorical_mixture

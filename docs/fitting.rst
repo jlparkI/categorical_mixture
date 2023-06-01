@@ -74,6 +74,31 @@ The remaining options enable parallel computation during fitting, which isn't
 important if your dataset is small but is very important if your dataset is
 large.
 
+Evaluating a model
+------------------
+
+Frequently we need to evaluate a number of different possible cluster numbers
+to determine which is most suitable. We can use Bayes Information Criterion
+(BIC) and Akaike Information Criterion (AIC):::
+
+  my_model.AIC(xdata, n_threads = 1)
+  my_model.AIC_offline(xdata, n_processes = 1, n_threads = 1)
+  my_model.BIC(xdata, n_threads = 1)
+  my_model.BIC_offline(xdata, n_processes = 1, n_threads = 1)
+
+Use the `offline` functions if your data is a list of .npy files rather
+than a numpy array. For more about `n_processes` and `n_threads`, see
+below.
+
+A model with a smaller AIC / BIC is better. Note that BIC is more conservative,
+it tends to favor models with a smaller number of parameters. BIC will typically show
+a global minimum, where all possible number of cluster settings yield a higher
+BIC than this minimum. AIC will *sometimes* exhibit a global minimum but more
+frequently exhibits an "elbow" with an obvious kink in the plot, and then the
+location of the "elbow" is the best number of clusters. See the example notebook
+for an illustration of how to use these to choose a good number of clusters for
+your training dataset.
+
 
 Multiprocessing and multithreading
 ------------------------------------

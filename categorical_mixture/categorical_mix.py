@@ -596,7 +596,7 @@ class CategoricalMixture:
         return nparams * np.log(ndatapoints) - 2 * loglik
 
 
-    def AIC(self, xdata, n_processes = 1, n_threads = 1):
+    def AIC(self, xdata, n_threads = 1):
         """Calculate the Akaike information criterion for an input array.
 
         Args:
@@ -674,8 +674,7 @@ class CategoricalMixture:
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
         rng = np.random.default_rng(random_state)
-        sample_mat = np.zeros((nsamples, self.sequence_length,
-                    self.num_possible_items), dtype = np.uint8)
+        sample_mat = np.zeros((nsamples, self.sequence_length), dtype = np.uint8)
         for i in range(nsamples):
             cnum = rng.multinomial(1, pvals = self.mix_weights).argmax()
             for j in range(self.sequence_length):

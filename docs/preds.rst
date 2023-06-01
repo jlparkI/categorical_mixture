@@ -20,6 +20,9 @@ that model predictions for this new datapoint are
 likely not useful. We'll see how to determine
 when we should not make a cluster assignment shortly.
 
+*Note that all of these functions do not accept a list
+of files as input; they only accept a numpy array.**
+
 If you have a fitted model called `my_model`, you can
 do the following:
 
@@ -27,6 +30,43 @@ do the following:
 Calculating overall probability
 -------------------------------
 
-:::
+Use score:::
 
-  my_model.:
+  my_model.score(xdata, n_threads = 1)
+
+Calculating probability for each cluster
+-------------------------------------------
+
+Use predict_proba:::
+
+  my_model.predict_proba(xdata, n_threads = 1, use_mixweights = True)
+
+If use_mixweights is True, the model will take the probability of
+each cluster into account when calculating the probability given
+that cluster. If False, it will not do so.
+
+Assign to clusters
+-------------------
+
+Use predict:::
+
+  my_model.predict(xdata, n_threads = 1)
+
+
+Generate samples from the model
+---------------------------------
+
+Use generate_samples:::
+
+  my_model.generate_samples(n_samples, random_state = 123)
+
+This function generates new sample sequences from the overall
+model. You may also want to generate samples from a specific
+cluster. If so, you can extract cluster `i` by making a copy
+of the model's parameters for cluster `i`:::
+
+  my_cluster_params = my_model.mu_mix[i,:,:]
+
+and then sample from each row `k` of my_cluster_params,
+e.g. `my_cluster_params[k,:]`, as if it were a categorical
+distribution.

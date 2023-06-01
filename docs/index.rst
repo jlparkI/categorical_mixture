@@ -7,15 +7,13 @@ data.
 .. toctree::
   :maxdepth: 1
    
-  Installation <installation>
+  About <background>  
 
-  Background <background>  
+  Installation <installation>
 
   Fitting a model <fitting>
   
   Making and using predictions <preds>
-
-  Questions / bugs <github_link>
 
 
 Examples
@@ -24,7 +22,7 @@ Examples
 .. toctree::
   :maxdepth: 1
 
-  notebooks/protein_examples
+  notebooks/protein_example
 
 
 
@@ -34,7 +32,7 @@ Package Reference
 .. toctree::
   :maxdepth: 1
    
-  insert_here<source/>
+  CategoricalMixture<source/categorical_mixture>
 
 
 
