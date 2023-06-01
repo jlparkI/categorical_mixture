@@ -35,7 +35,7 @@ cdef extern from "responsibility_calcs.h" nogil:
                    int stats_dim2, int x_dim0,
                    int x_dim1); 
 
-cdef extern from "weighted_count_calcs.h" nogil:
+cdef extern from "weighted_counts.h" nogil:
     int getWeightedCountCExt_main(uint8_t *x,
                    double *wcount, double *resp,
                    int wcount_dim0, int wcount_dim1,
@@ -101,7 +101,7 @@ def em_offline(list xfiles, np.ndarray[np.float64_t, ndim=1] mix_weights,
         x = np.load(xfile)
         resp = np.zeros((mu.shape[0], x.shape[0]))
         lnorm = np.zeros((x.shape[0]))
-            
+
         errcode = getProbsCExt_main(&x[0,0], &mu[0,0,0], &resp[0,0],
                         mu.shape[0], mu.shape[1], mu.shape[2],
                         x.shape[0], x.shape[1],
@@ -116,7 +116,6 @@ def em_offline(list xfiles, np.ndarray[np.float64_t, ndim=1] mix_weights,
         rsum = resp.sum(axis=1)
         new_weights += rsum
         net_resp += rsum.sum()
-
         errcode = getWeightedCountCExt_main(&x[0,0],
                     &rik_counts[0,0,0], &resp[0,0],
                     rik_counts.shape[0], rik_counts.shape[1], 
@@ -128,7 +127,7 @@ def em_offline(list xfiles, np.ndarray[np.float64_t, ndim=1] mix_weights,
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def em_online(np.ndarray[np.uint8, ndim=2] x,
+def em_online(np.ndarray[np.uint8_t, ndim=2] x,
             np.ndarray[np.float64_t, ndim=1] mix_weights, 
                 np.ndarray[np.float64_t, ndim=3] mu,
                 int n_threads):
@@ -161,7 +160,6 @@ def em_online(np.ndarray[np.uint8, ndim=2] x,
     cdef np.ndarray[np.float64_t, ndim=2] log_mixweights = \
             np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))[:,None]
     cdef np.ndarray[np.float64_t, ndim=1] new_weights = np.zeros((mix_weights.shape[0]))
-    cdef np.ndarray[np.uint8_t, ndim=2] x
     cdef np.ndarray[np.float64_t, ndim=1] lnorm
     cdef np.ndarray[np.float64_t, ndim=2] resp
     cdef int errcode
@@ -175,7 +173,6 @@ def em_online(np.ndarray[np.uint8, ndim=2] x,
     if mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
 
-    x = np.load(xfile)
     resp = np.zeros((mu.shape[0], x.shape[0]))
     lnorm = np.zeros((x.shape[0]))
             
@@ -254,10 +251,12 @@ def hard_cluster_assign(list xfiles,
         assignments = np.zeros((x.shape[0]), dtype=np.uint32)
         lnorm = np.zeros((x.shape[0]))
             
+        #This function currently uses single threading only, although this
+        #can easily be updated. TODO: Add multithreading for this.
         errcode = getProbsCExt_main(&x[0,0], &mu[0,0,0], &resp[0,0],
                         mu.shape[0], mu.shape[1], mu.shape[2],
                         x.shape[0], x.shape[1],
-                        n_threads)
+                        1)
         resp += log_mixweights
         lnorm[:] = logsumexp(resp, axis=0)
         with np.errstate(under="ignore"):
@@ -315,7 +314,7 @@ def multimix_predict(np.ndarray[np.uint8_t, ndim=2] x,
                         mu.shape[0], mu.shape[1], mu.shape[2],
                         x.shape[0], x.shape[1], n_threads)
     probs += log_mixweights[:,None]
-    cluster_assignments = probs.argmax(axis=0)
+    cluster_assignments = probs.argmax(axis=0).astype(np.uint32)
     return cluster_assignments
 
 

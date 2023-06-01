@@ -1,4 +1,4 @@
-"""Implements the MultinoulliMixture class, for all operations involved
+"""Implements the CategoricalMixture class, for all operations involved
 in fitting the mixture model and in generating predictions for new
 datapoints."""
 import copy
@@ -17,10 +17,10 @@ from core_cpu_func_wrappers import hard_cluster_assign
 
 
 
-class MultinoulliMixture:
-    """A MultinoulliMixture model, with all the methods necessary
+class CategoricalMixture:
+    """A CategoricalMixture model, with all the methods necessary
     to fit the model, score it and do inference. This
-    MultinoulliMixture is fitted using EM -- if it ever proves
+    CategoricalMixture is fitted using EM -- if it ever proves
     useful, we can add an alternative based on variational
     inference.
 
@@ -134,6 +134,8 @@ class MultinoulliMixture:
             ValueError: A ValueError is raised if one or more files has
                 unacceptable issues.
         """
+        if not isinstance(xlist, list):
+            raise ValueError("Unexpected input supplied.")
         for xfile in xlist:
             x_in = np.load(xfile)
             if np.max(x_in) > self.num_possible_items or np.min(x_in) < 0:
@@ -144,6 +146,8 @@ class MultinoulliMixture:
                 raise ValueError(f"Unexpected shape for {xfile}.")
             if x_in.shape[1] != self.sequence_length or x_in.shape[0] < 1:
                 raise ValueError(f"Unexpected shape for {xfile}.")
+            if not x_in.flags["C_CONTIGUOUS"]:
+                raise ValueError("Input data is not C-contiguous.")
 
 
     def _check_input_array(self, xdata):
@@ -158,6 +162,8 @@ class MultinoulliMixture:
             ValueError: A ValueError is raised if unacceptable
                 input data is supplied.
         """
+        if not isinstance(xdata, np.ndarray):
+            raise ValueError("Unexpected input supplied.")
         if np.max(xdata) >= self.num_possible_items or np.min(xdata) < 0:
             raise ValueError("Values in input data are out of range.")
         if xdata.dtype != "uint8":
@@ -253,14 +259,13 @@ class MultinoulliMixture:
 
 
         best_loss = -np.inf
-
         for restart in range(n_restarts):
             mix_weights, mu_mix, loss = iter_runner(xdata, tol,
                             max_iter, random_state + restart,
                             model_polishing, n_processes = n_processes,
                             n_threads = n_threads)
             if loss > best_loss:
-                best_loss = loss
+                best_loss = copy.deepcopy(loss)
                 self.mix_weights = mix_weights
                 self.mu_mix = mu_mix.clip(min=1e-16)
 
@@ -303,6 +308,7 @@ class MultinoulliMixture:
                 raise ValueError("Model polishing specified, but model has not "
                         "been fitted yet.")
             mix_weights, mu_mix = self.mix_weights, self.mu_mix
+
         for i in range(max_iter):
             prev_loss = copy.copy(loss)
             mix_weights, loss, mu_mix, net_resp, ndpoints = em_online(xdata,
@@ -357,11 +363,11 @@ class MultinoulliMixture:
                 raise ValueError("Model polishing specified, but model has not "
                         "been fitted yet.")
             mix_weights, mu_mix = self.mix_weights, self.mu_mix
+
         for i in range(max_iter):
             prev_loss = copy.copy(loss)
             mix_weights, loss, mu_mix, net_resp, ndpoints = em_offline(xfiles,
                                 mix_weights, mu_mix, n_threads)
-
             mix_weights /= net_resp
             loss /= ndpoints
             mu_mix /= mu_mix.sum(axis=2)[:,:,None].clip(min=1)
@@ -538,8 +544,11 @@ class MultinoulliMixture:
             raise ValueError("Model not fitted yet.")
 
         ndatapoints = self._get_ndatapoints(xdata)
-        loglik = multimix_score(xdata, self.mu_mix, self.mix_weights,
-                n_threads)
+        #The mu parameters must be copied since multimix_score modifies
+        #the mu input in place (to avoid creating an extra copy when
+        #multiprocessing is used).
+        loglik = multimix_score(xdata, self.mu_mix.copy(), self.mix_weights,
+                n_threads).sum()
 
         nparams = self._get_nparams()
         return nparams * np.log(ndatapoints) - 2 * loglik
@@ -600,9 +609,11 @@ class MultinoulliMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None:
             raise ValueError("Model not fitted yet.")
-        loglik = multimix_score(xdata, self.mu_mix, self.mix_weights,
-                n_threads)
-
+        #The mu parameters must be copied since multimix_score modifies
+        #the mu input in place (to avoid creating an extra copy when
+        #multiprocessing is used).
+        loglik = multimix_score(xdata, self.mu_mix.copy(), self.mix_weights.copy(),
+                n_threads).sum()
         return 2 * self._get_nparams() - 2 * loglik
 
 
@@ -696,6 +707,9 @@ class MultinoulliMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
+        #The mu parameters must be copied since multimix_score modifies
+        #the mu input in place (to avoid creating an extra copy when
+        #multiprocessing is used).
         return multimix_predict(xdata, self.mu_mix.copy(),
                 self.mix_weights, n_threads)
 
@@ -722,6 +736,9 @@ class MultinoulliMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
+        #The mu parameters must be copied since multimix_score modifies
+        #the mu input in place (to avoid creating an extra copy when
+        #multiprocessing is used).
         return multimix_cluster_probs(xdata, self.mu_mix.copy(),
                 self.mix_weights, n_threads, use_mixweights)
 
@@ -792,7 +809,10 @@ class MultinoulliMixture:
         self._check_input_files(xfiles)
         if self.mu_mix is None:
             raise ValueError("Model not fitted yet.")
-        return multimix_loglik_offline(xfiles, self.mu_mix,
+        #The mu parameters must be copied since multimix_score modifies
+        #the mu input in place (to avoid creating an extra copy when
+        #multiprocessing is used).
+        return multimix_loglik_offline(xfiles, self.mu_mix.copy(),
                 self.mix_weights, n_threads)
 
 
@@ -822,4 +842,7 @@ class MultinoulliMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
-        return multimix_score(xdata, self.mu_mix, self.mix_weights, n_threads)
+        #The mu parameters must be copied since multimix_score modifies
+        #the mu input in place (to avoid creating an extra copy when
+        #multiprocessing is used).
+        return multimix_score(xdata, self.mu_mix.copy(), self.mix_weights, n_threads)

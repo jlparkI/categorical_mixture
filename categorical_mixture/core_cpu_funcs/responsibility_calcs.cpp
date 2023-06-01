@@ -66,7 +66,7 @@ int getProbsCExt_main(uint8_t *x, double *mu, double *resp,
     int chunkSize = (mu_dim0 + n_threads - 1) / n_threads;
     std::vector<std::thread> threads(n_threads);
 
-    if (n_threads < x_dim0)
+    if (n_threads > x_dim0)
         n_threads = x_dim0;
 
     for (int i=0; i < n_threads; i++){
