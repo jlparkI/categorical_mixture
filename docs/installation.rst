@@ -12,6 +12,9 @@ environment already active:::
   python setup.py install
 
 Requirements are Python 3, scipy, numpy and Cython (Ray is an optional
-dependency that's useful on some cluster environments).
+dependency that's useful on some cluster environments). Note that the
+requirements in the requirements.txt are mostly for development and
+building docs etc, so you DO NOT NEED ALL OF THEM -- don't run
+`pip install -r requirements.txt` unless necessary.
 
 If you encounter any errors, please report at the project github page.
