@@ -8,4 +8,4 @@ new sequences, calculate the probability that a test datapoint could have come f
 distribution it describes, and assign to clusters. It's fairly specialized, not very general
 purpose, but there are some types of tasks where it's "just right" for what you're trying to do.
 
-For installation and usage, see the docs.
+For installation and usage, see [the docs](https://categorical-mixture.readthedocs.io/en/latest/).
