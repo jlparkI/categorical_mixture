@@ -1,4 +1,4 @@
-multinomial_mixture
+categorical_mixture
 ================================
 A simple, highly scalable generative
 model for sequence or fixed-length
@@ -17,7 +17,7 @@ data.
 
 
 Examples
-==========
+----------
 
 .. toctree::
   :maxdepth: 1
@@ -27,7 +27,7 @@ Examples
 
 
 Package Reference
-=====================
+--------------------
 
 .. toctree::
   :maxdepth: 1
