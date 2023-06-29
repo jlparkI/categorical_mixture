@@ -35,7 +35,7 @@ dataset.
 
 Once you have your data, you can create a model:::
 
- my_model = MultinoulliMixture(n_components, num_possible_items = 21,
+ my_model = CategoricalMixture(n_components, num_possible_items = 21,
                           sequence_length = 158)
 
 Here `n_components` is the number of clusters. `num_possible_items` is the
