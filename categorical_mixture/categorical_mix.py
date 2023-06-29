@@ -429,7 +429,7 @@ class CategoricalMixture:
             caller_args = [(xchunk, mix_weights.copy(), mu_mix.copy(),
                                 n_threads) for xchunk in xchunks]
             with Pool(n_processes) as mp_pool:
-                mp_res = list(mp_pool.starmap(multimix_loglik_offline, caller_args))
+                mp_res = list(mp_pool.starmap(em_offline, caller_args))
 
             mix_weights = np.zeros(mp_res[0][0].shape)
             mu_mix = np.zeros(mp_res[0][2].shape)
