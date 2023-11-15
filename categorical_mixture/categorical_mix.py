@@ -70,6 +70,34 @@ class CategoricalMixture:
         self.sequence_length = sequence_length
 
 
+    def load_params(self, mu_mix, mix_weights):
+        """Checks input params to ensure they are compatible with selected
+        settings, and if so, sets the model parameters to the inputs.
+
+        Args:
+            mu_mix (np.ndarray): Array of type np.float64, shape (self.n_components,
+                self.sequence_length, self.num_possible_items). The probability of
+                each possible item for each point in sequence length for each cluster.
+            mix_weights (np.ndarray): Array of type np.float64, shape (self.n_components).
+                The weight for each distribution in the mixture.
+
+        Raises:
+            ValueError: A ValueError is raised if the inputs are inappropriate.
+        """
+        if not isinstance(mu_mix, np.ndarray) or not isinstance(mix_weights, np.ndarray):
+            raise ValueError("mu_mix and mix_weights should both be numpy arrays.")
+        if len(mu_mix.shape) != 3 or len(mix_weights.shape) != 1:
+            raise ValueError("mu_mix and mix_weights must be 3d and 1d arrays respectively.")
+        if mu_mix.shape[0] != self.n_components or mu_mix.shape[1] != self.sequence_length \
+                or mu_mix.shape[2] != self.num_possible_items:
+            raise ValueError("mu_mix has an inappropriate shape.")
+        if mix_weights.shape[0] != self.n_components:
+            raise ValueError("mix_weights has an inappropriate shape.")
+        self.mix_weights = mix_weights
+        self.mu_mix = mu_mix
+
+
+
     def _get_ndatapoints(self, xdata):
         """If the input is a list of files, this function
         quickly count the numbers of datapoints without
