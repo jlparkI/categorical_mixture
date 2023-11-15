@@ -4,12 +4,6 @@ datapoints."""
 import copy
 from multiprocessing import Pool
 import numpy as np
-try:
-    import ray
-    from ray_wrapper import _ray_caller
-except:
-    print("ray not installed! fitting with ray will not be an option.")
-
 from core_cpu_func_wrappers import em_online, em_offline, multimix_predict
 from core_cpu_func_wrappers import multimix_loglik_offline, multimix_score, multimix_cluster_probs
 from core_cpu_func_wrappers import hard_cluster_assign
@@ -172,14 +166,15 @@ class CategoricalMixture:
             raise ValueError("Unexpected shape for input data.")
         if xdata.shape[1] != self.sequence_length or xdata.shape[0] < 1:
             raise ValueError("Unexpected shape for input data.")
+        if not xdata.flags["C_CONTIGUOUS"]:
+            raise ValueError("Input data is not C-contiguous.")
 
 
     def fit(self, xdata, max_iter = 150, tol = 1e-3,
                 n_restarts = 1, random_state = 123,
                 enable_input_checking = True,
                 model_polishing = False,
-                n_processes = 1, n_threads = 1,
-                use_ray = False):
+                n_processes = 1, n_threads = 1):
         """Fits the model to either an input array or a list
         of input files, potentially using multiple restarts if so
         specified.
@@ -232,11 +227,6 @@ class CategoricalMixture:
                 n_processes to > 1, each process in n_processes will
                 spawn n_threads, so total_threads is n_threads *
                 n_processes.
-            use_ray (bool): If True, and if n_processes is > 1,
-                the Ray Python package is used instead of multiprocessing,
-                which may be helpful on some cluster environments. Only
-                works if Ray is installed. If True, n_threads is ignored
-                and each Ray process uses a single thread.
 
         Raises:
             ValueError: Raised if unexpected inputs are supplied.
@@ -248,9 +238,7 @@ class CategoricalMixture:
         elif isinstance(xdata, list):
             if enable_input_checking:
                 self._check_input_files(xdata)
-            if use_ray:
-                iter_runner = self._single_iter_ray
-            elif n_processes == 1 or len(xdata) < 3:
+            if n_processes == 1 or len(xdata) < 3:
                 iter_runner = self._single_iter_offline
             else:
                 iter_runner = self._single_iter_mp
@@ -318,7 +306,7 @@ class CategoricalMixture:
             loss /= ndpoints
             mu_mix /= mu_mix.sum(axis=2)[:,:,None].clip(min=1)
 
-            print("Loss: %s"%loss, flush=True)
+            print(f"Loss: {loss}", flush=True)
             if np.abs(loss - prev_loss) < tol:
                 break
 
@@ -372,7 +360,7 @@ class CategoricalMixture:
             loss /= ndpoints
             mu_mix /= mu_mix.sum(axis=2)[:,:,None].clip(min=1)
 
-            print("Loss: %s"%loss, flush=True)
+            print(f"Loss: {loss}", flush=True)
             if np.abs(loss - prev_loss) < tol:
                 break
 
@@ -449,76 +437,6 @@ class CategoricalMixture:
         print(f"Iterations: {i}****************\n")
         return mix_weights, mu_mix, loss
 
-
-
-    def _single_iter_ray(self, xfiles, tol,
-                    max_iter, random_state,
-                    model_polishing,
-                    n_processes = 1,
-                    n_threads = 1):
-        """Fit the input list of on-disk numpy .npy files
-        with one random state, using Ray with
-        n_processes but no multithreading.
-
-        Args:
-            xfiles (list): A list of .npy files, each a numpy
-                array of type np.uint8 saved on disk.
-            max_iter (int): The maximum number of iterations for
-                this restart.
-            tol (float): Once the iteration to iteration change in loss
-                falls below this value, fitting is assumed to have
-                converged.
-            random_state (int): The random number generator seed.
-            model_polishing (bool): Defaults to False. If True,
-                ignore random_state and use existing weights instead
-                of reinitializing.
-            n_processes (int): The number of processes to use.
-            n_threads (int): This function accepts n_threads for
-                consistency with other single_iter functions but
-                does not use it; fitting with Ray uses one thread
-                per process.
-
-        Raises:
-            ValueError: Raised if unexpected inputs are supplied.
-        """
-        ray.init()
-        print("Using ray.", flush=True)
-        n_processes = min(len(xfiles), n_processes)
-        chunk_size = int((len(xfiles) + n_processes - 1) / n_processes)
-        xchunks = [xfiles[i:i + chunk_size] for i in
-                range(0, len(xfiles), chunk_size)]
-
-        loss = -np.inf
-        if not model_polishing:
-            mix_weights, mu_mix = self._get_init_params(random_state)
-        else:
-            if self.mix_weights is None or self.mu_mix is None:
-                raise ValueError("Model polishing specified, but model has not "
-                        "been fitted yet.")
-            mix_weights, mu_mix = self.mix_weights, self.mu_mix
-
-        for i in range(max_iter):
-            prev_loss = copy.copy(loss)
-            futures = [_ray_caller.remote(xchunk, mix_weights, mu_mix) for xchunk in xchunks]
-            mp_res = ray.get(futures)
-
-            mix_weights = np.zeros(mp_res[0][0].shape)
-            mu_mix = np.zeros(mp_res[0][2].shape)
-            loss = 0
-            for res in mp_res:
-                mix_weights += res[0]
-                mu_mix += res[2]
-                loss += res[1]
-
-            mix_weights /= np.sum([res[3] for res in mp_res])
-            loss /= np.sum([res[4] for res in mp_res])
-            mu_mix /= mu_mix.sum(axis=2)[:,:,None].clip(min=1)
-
-            print(f"Loss: {loss}", flush=True)
-            if np.abs(loss - prev_loss) < tol:
-                break
-        print(f"Iterations: {i}****************\n")
-        return mix_weights, mu_mix, loss
 
 
     def _get_nparams(self):
