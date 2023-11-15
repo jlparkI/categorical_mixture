@@ -186,7 +186,7 @@ void *getProbsCExt_worker(uint8_t *x, double *resp,
  *
  * All operations are in place, nothing is returned.
  */
-int getProbsCExt_main(uint8_t *x, double *mu, double *resp,
+int getProbsCExt_masked_main(uint8_t *x, double *mu, double *resp,
                    int mu_dim0, int mu_dim1, int mu_dim2,
                    int x_dim0, int x_dim1,
                    int n_threads, int startCol, int endCol){

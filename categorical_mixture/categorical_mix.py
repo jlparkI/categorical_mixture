@@ -798,5 +798,5 @@ class CategoricalMixture:
         #The mu parameters must be copied since multimix_score modifies
         #the mu input in place (to avoid creating an extra copy when
         #multiprocessing is used).
-        return multimix_score_masked(xdata, self.mu_mix.copy(), self.mix_weights, n_threads,
-                start_col, end_col)
+        return multimix_score_masked(xdata, self.mu_mix.copy(), self.mix_weights,
+                start_col, end_col, n_threads)

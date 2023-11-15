@@ -34,6 +34,12 @@ cdef extern from "responsibility_calcs.h" nogil:
                    int stats_dim0, int stats_dim1,
                    int stats_dim2, int x_dim0,
                    int x_dim1); 
+    int getProbsCExt_masked_main(uint8_t *x,
+                   double *mu, double *resp,
+                   int mu_dim0, int mu_dim1,
+                   int mu_dim2, int x_dim0,
+                   int x_dim1, int n_threads,
+                   int startCol, int endCol); 
 
 cdef extern from "weighted_counts.h" nogil:
     int getWeightedCountCExt_main(uint8_t *x,
@@ -453,8 +459,6 @@ def multimix_score(np.ndarray[np.uint8_t, ndim=2] x,
 
     if mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
-    if x.shape[1] != mix_weights.shape[1]:
-        raise ValueError("Input data has incorrect length.")
 
     mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
     mu[:] = np.log(mu)
@@ -475,7 +479,7 @@ def multimix_score(np.ndarray[np.uint8_t, ndim=2] x,
 def multimix_score_masked(np.ndarray[np.uint8_t, ndim=2] x,
         np.ndarray[np.float64_t, ndim=3] mu,
         np.ndarray[np.float64_t, ndim=1] mix_weights,
-        int n_threads = 1, int start_col, int end_col):
+        int start_col, int end_col, int n_threads = 1):
     """Determines the log likelihood of each input datapoint
     in an array of input data.
 
@@ -492,9 +496,9 @@ def multimix_score_masked(np.ndarray[np.uint8_t, ndim=2] x,
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
-        n_threads (int): The number of threads to use.
         start_col (int): The first column to use; all previous are masked.
         end_col (int): The last column to use; all previous are masked.
+        n_threads (int): The number of threads to use.
 
     Returns:
         probs (np.ndarray): A float64 array of shape (x.shape[0])
@@ -508,10 +512,8 @@ def multimix_score_masked(np.ndarray[np.uint8_t, ndim=2] x,
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
     if start_col < 0 or start_col >= end_col:
         raise ValueError("Improper start and end columns supplied.")
-    if end_col >= mix_weights.shape[1]:
+    if end_col > mu.shape[1]:
         raise ValueError("Improper start and end columns supplied.")
-    if x.shape[1] != mix_weights.shape[1]:
-        raise ValueError("Input data has incorrect length.")
 
     mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
     mu[:] = np.log(mu)
