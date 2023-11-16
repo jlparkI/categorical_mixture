@@ -6,7 +6,8 @@ from multiprocessing import Pool
 import numpy as np
 from core_cpu_func_wrappers import em_online, em_offline, multimix_predict
 from core_cpu_func_wrappers import multimix_loglik_offline, multimix_score, multimix_cluster_probs
-from core_cpu_func_wrappers import hard_cluster_assign, multimix_score_masked
+from core_cpu_func_wrappers import hard_cluster_assign, multimix_score_terminal_masked
+from core_cpu_func_wrappers import multimix_score_gapped
 
 
 
@@ -793,7 +794,7 @@ class CategoricalMixture:
         return multimix_score(xdata, self.mu_mix.copy(), self.mix_weights, n_threads)
 
 
-    def masked_score(self, xdata, start_col = 0, end_col = 1, n_threads = 1):
+    def terminal_masked_score(self, xdata, start_col = 0, end_col = 1, n_threads = 1):
         """Generate the overall log-likelihood of individual datapoints,
         but with a "mask" such that amino acids at the c-terminal or
         n-terminal are masked out and ignored. This is useful primarily
@@ -826,5 +827,37 @@ class CategoricalMixture:
         #The mu parameters must be copied since multimix_score modifies
         #the mu input in place (to avoid creating an extra copy when
         #multiprocessing is used).
-        return multimix_score_masked(xdata, self.mu_mix.copy(), self.mix_weights,
+        return multimix_score_terminal_masked(xdata, self.mu_mix.copy(), self.mix_weights,
                 start_col, end_col, n_threads)
+
+
+    def gapped_score(self, xdata, n_threads = 1):
+        """Generate the overall log-likelihood of individual datapoints,
+        but ignoring gaps (cases where xdata==20). This is useful primarily
+        when dealing with light chains that have large unusual deletions.
+
+        Args:
+            xdata (np.ndarray): An array with the input data,
+                of type np.uint8.
+            n_threads (int): the number of threads to use.
+            start_col (int): The first column of the input to use;
+                previous columns are masked.
+            end_col (int): The last column of the input to use;
+                remaining columns are masked.
+
+        Returns:
+            loglik (np.ndarray): A float64 array of shape (x.shape[0])
+                where each element is the log-likelihood of that
+                datapoint given the model.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        #The mu parameters must be copied since multimix_score modifies
+        #the mu input in place (to avoid creating an extra copy when
+        #multiprocessing is used).
+        return multimix_score_gapped(xdata, self.mu_mix.copy(), self.mix_weights,
+                n_threads)

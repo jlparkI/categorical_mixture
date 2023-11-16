@@ -34,12 +34,17 @@ cdef extern from "responsibility_calcs.h" nogil:
                    int stats_dim0, int stats_dim1,
                    int stats_dim2, int x_dim0,
                    int x_dim1); 
-    int getProbsCExt_masked_main(uint8_t *x,
+    int getProbsCExt_terminal_masked_main(uint8_t *x,
                    double *mu, double *resp,
                    int mu_dim0, int mu_dim1,
                    int mu_dim2, int x_dim0,
                    int x_dim1, int n_threads,
                    int startCol, int endCol); 
+    int getProbsCExt_gapped_main(uint8_t *x,
+                   double *mu, double *resp,
+                   int mu_dim0, int mu_dim1,
+                   int mu_dim2, int x_dim0,
+                   int x_dim1, int n_threads); 
 
 cdef extern from "weighted_counts.h" nogil:
     int getWeightedCountCExt_main(uint8_t *x,
@@ -476,12 +481,13 @@ def multimix_score(np.ndarray[np.uint8_t, ndim=2] x,
 
 
 
-def multimix_score_masked(np.ndarray[np.uint8_t, ndim=2] x,
+def multimix_score_terminal_masked(np.ndarray[np.uint8_t, ndim=2] x,
         np.ndarray[np.float64_t, ndim=3] mu,
         np.ndarray[np.float64_t, ndim=1] mix_weights,
         int start_col, int end_col, int n_threads = 1):
     """Determines the log likelihood of each input datapoint
-    in an array of input data.
+    in an array of input data, but only from start_col through
+    end_col.
 
     The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
@@ -522,10 +528,61 @@ def multimix_score_masked(np.ndarray[np.uint8_t, ndim=2] x,
     resp = np.zeros((mu.shape[0], x.shape[0]))
     probs = np.zeros((x.shape[0]))
 
-    errcode = getProbsCExt_masked_main(&x[0,0], &mu[0,0,0], &resp[0,0],
+    errcode = getProbsCExt_terminal_masked_main(&x[0,0], &mu[0,0,0], &resp[0,0],
                         mu.shape[0], mu.shape[1], mu.shape[2],
                         x.shape[0], x.shape[1], n_threads,
                         start_col, end_col)
+    resp += log_mixweights[:,None]
+    probs[:] = logsumexp(resp, axis=0)
+    return probs
+
+
+def multimix_score_gapped(np.ndarray[np.uint8_t, ndim=2] x,
+        np.ndarray[np.float64_t, ndim=3] mu,
+        np.ndarray[np.float64_t, ndim=1] mix_weights,
+        int n_threads = 1):
+    """Determines the log likelihood of each input datapoint
+    in an array of input data, but ignoring gaps (cases where
+    x==20).
+
+    The data should be of type np.uint8 and
+    should not contain any values larger than the number of possible
+    items per position (mu.shape[2]). If these conditions are violated,
+    a segfault may occur. The Python wrapper checks all input data to
+    ensure it meets these conditions. If you decide to use this function
+    OUTSIDE the Python wrapper, you must implement these checks yourself.
+
+    Args:
+        x (np.ndarray): An input data array.
+        mu (np.ndarray): The model parameters (probability of each choice
+            at each position). Shape is (n_components, sequence_length,
+            num_possible_items).
+        mix_weights (np.ndarray): The mixture weights for each component.
+        start_col (int): The first column to use; all previous are masked.
+        end_col (int): The last column to use; all previous are masked.
+        n_threads (int): The number of threads to use.
+
+    Returns:
+        probs (np.ndarray): A float64 array of shape (x.shape[0])
+            containing the log-likelihood of each datapoint.
+    """
+    cdef np.ndarray[np.float64_t, ndim=2] resp
+    cdef np.ndarray[np.float64_t, ndim=1] log_mixweights
+    cdef np.ndarray[np.float64_t, ndim=1] probs
+
+    if mu.shape[0] != mix_weights.shape[0]:
+        raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
+
+    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
+    mu[:] = np.log(mu)
+    log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
+
+    resp = np.zeros((mu.shape[0], x.shape[0]))
+    probs = np.zeros((x.shape[0]))
+
+    errcode = getProbsCExt_gapped_main(&x[0,0], &mu[0,0,0], &resp[0,0],
+                        mu.shape[0], mu.shape[1], mu.shape[2],
+                        x.shape[0], x.shape[1], n_threads)
     resp += log_mixweights[:,None]
     probs[:] = logsumexp(resp, axis=0)
     return probs
