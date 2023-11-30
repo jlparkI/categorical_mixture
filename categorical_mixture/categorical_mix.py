@@ -4,6 +4,7 @@ datapoints."""
 import copy
 from multiprocessing import Pool
 import numpy as np
+from .constants import constants
 from core_cpu_func_wrappers import em_online, em_offline, multimix_predict
 from core_cpu_func_wrappers import multimix_loglik_offline, multimix_score, multimix_cluster_probs
 from core_cpu_func_wrappers import hard_cluster_assign, multimix_score_terminal_masked
@@ -22,6 +23,10 @@ class CategoricalMixture:
     Attributes:
         mu_mix (np.ndarray): Array of type np.float64, shape (self.n_components,
             self.sequence_length, self.num_possible_items). The probability of
+            each possible item for each point in sequence length for each cluster.
+            Initialized to None, only converted to array once model is fitted.
+        log_mu_mix (np.ndarray): Array of type np.float64, shape (self.n_components,
+            self.sequence_length, self.num_possible_items). The log-probability of
             each possible item for each point in sequence length for each cluster.
             Initialized to None, only converted to array once model is fitted.
         mix_weights (np.ndarray): Array of type np.float64, shape (self.n_components).
@@ -66,6 +71,7 @@ class CategoricalMixture:
 
         self.mix_weights = None
         self.mu_mix = None
+        self.log_mu_mix = None
         self.n_components = n_components
         self.num_possible_items = num_possible_items
         self.sequence_length = sequence_length
@@ -94,8 +100,13 @@ class CategoricalMixture:
             raise ValueError("mu_mix has an inappropriate shape.")
         if mix_weights.shape[0] != self.n_components:
             raise ValueError("mix_weights has an inappropriate shape.")
+
         self.mix_weights = mix_weights
         self.mu_mix = mu_mix
+        self.log_mu_mix = mu_mix.copy()
+        self.log_mu_mix[self.log_mu_mix < constants.MINIMUM_PROB_VAL] = constants.MINIMUM_PROB_VAL
+        self.log_mu_mix[:] = np.log(self.log_mu_mix)
+
 
 
 
@@ -282,9 +293,8 @@ class CategoricalMixture:
                             model_polishing, n_processes = n_processes,
                             n_threads = n_threads)
             if loss > best_loss:
+                self.load_params(mu_mix.clip(1e-16), mix_weights)
                 best_loss = copy.deepcopy(loss)
-                self.mix_weights = mix_weights
-                self.mu_mix = mu_mix.clip(min=1e-16)
 
         if self.mu_mix is None:
             raise ValueError("No restarts converged!")
@@ -491,10 +501,7 @@ class CategoricalMixture:
             raise ValueError("Model not fitted yet.")
 
         ndatapoints = self._get_ndatapoints(xdata)
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        loglik = multimix_score(xdata, self.mu_mix.copy(), self.mix_weights,
+        loglik = multimix_score(xdata, self.log_mu_mix, self.mix_weights,
                 n_threads).sum()
 
         nparams = self._get_nparams()
@@ -533,7 +540,7 @@ class CategoricalMixture:
             print(f"Using MP. Chunk size: {chunk_size} files")
             xchunks = [xfiles[i:i + chunk_size] for i in
                     range(0, len(xfiles), chunk_size)]
-            caller_args = [(xchunk, self.mu_mix.copy(), self.mix_weights.copy(),
+            caller_args = [(xchunk, self.log_mu_mix.copy(), self.mix_weights.copy(),
                                 n_threads) for xchunk in xchunks]
             with Pool(n_processes) as mp_pool:
                 mp_res = list(mp_pool.starmap(multimix_loglik_offline, caller_args))
@@ -556,10 +563,7 @@ class CategoricalMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None:
             raise ValueError("Model not fitted yet.")
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        loglik = multimix_score(xdata, self.mu_mix.copy(), self.mix_weights.copy(),
+        loglik = multimix_score(xdata, self.log_mu_mix, self.mix_weights.copy(),
                 n_threads).sum()
         return 2 * self._get_nparams() - 2 * loglik
 
@@ -593,7 +597,7 @@ class CategoricalMixture:
             print(f"Using MP. Chunk size: {chunk_size} files")
             xchunks = [xfiles[i:i + chunk_size] for i in
                     range(0, len(xfiles), chunk_size)]
-            caller_args = [(xchunk, self.mu_mix.copy(), self.mix_weights.copy(),
+            caller_args = [(xchunk, self.log_mu_mix.copy(), self.mix_weights.copy(),
                                 n_threads) for xchunk in xchunks]
             with Pool(n_processes) as mp_pool:
                 mp_res = list(mp_pool.starmap(multimix_loglik_offline, caller_args))
@@ -653,10 +657,7 @@ class CategoricalMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        return multimix_predict(xdata, self.mu_mix.copy(),
+        return multimix_predict(xdata, self.log_mu_mix,
                 self.mix_weights, n_threads)
 
 
@@ -682,10 +683,7 @@ class CategoricalMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        return multimix_cluster_probs(xdata, self.mu_mix.copy(),
+        return multimix_cluster_probs(xdata, self.log_mu_mix,
                 self.mix_weights, n_threads, use_mixweights)
 
 
@@ -725,7 +723,7 @@ class CategoricalMixture:
 
         cluster_stats = np.zeros_like((self.mu_mix), dtype = np.uint32)
 
-        caller_args = [(xchunk, self.mu_mix.copy(), self.mix_weights.copy())
+        caller_args = [(xchunk, self.log_mu_mix.copy(), self.mix_weights.copy())
                 for xchunk in xchunks]
         with Pool(n_proc) as mp_pool:
             mp_res = list(mp_pool.starmap(hard_cluster_assign,
@@ -755,10 +753,7 @@ class CategoricalMixture:
         self._check_input_files(xfiles)
         if self.mu_mix is None:
             raise ValueError("Model not fitted yet.")
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        return multimix_loglik_offline(xfiles, self.mu_mix.copy(),
+        return multimix_loglik_offline(xfiles, self.log_mu_mix,
                 self.mix_weights, n_threads)
 
 
@@ -788,10 +783,7 @@ class CategoricalMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        return multimix_score(xdata, self.mu_mix.copy(), self.mix_weights, n_threads)
+        return multimix_score(xdata, self.log_mu_mix, self.mix_weights, n_threads)
 
 
     def terminal_masked_score(self, xdata, start_col = 0, end_col = 1, n_threads = 1):
@@ -824,10 +816,7 @@ class CategoricalMixture:
             raise ValueError("Model not fitted yet.")
         if start_col < 0 or start_col >= end_col or end_col > self.mu_mix.shape[1]:
             raise ValueError("Inappropriate col start / col end passed.")
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        return multimix_score_terminal_masked(xdata, self.mu_mix.copy(), self.mix_weights,
+        return multimix_score_terminal_masked(xdata, self.log_mu_mix, self.mix_weights,
                 start_col, end_col, n_threads)
 
 
@@ -856,8 +845,5 @@ class CategoricalMixture:
         self._check_input_array(xdata)
         if self.mu_mix is None or self.mix_weights is None:
             raise ValueError("Model not fitted yet.")
-        #The mu parameters must be copied since multimix_score modifies
-        #the mu input in place (to avoid creating an extra copy when
-        #multiprocessing is used).
-        return multimix_score_gapped(xdata, self.mu_mix.copy(), self.mix_weights,
+        return multimix_score_gapped(xdata, self.log_mu_mix, self.mix_weights,
                 n_threads)

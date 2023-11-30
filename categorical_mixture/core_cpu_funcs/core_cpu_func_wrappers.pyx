@@ -216,14 +216,14 @@ def em_online(np.ndarray[np.uint8_t, ndim=2] x,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def hard_cluster_assign(list xfiles, 
-                    np.ndarray[np.float64_t, ndim=3] mu,
+                    np.ndarray[np.float64_t, ndim=3] log_mu,
                     np.ndarray[np.float64_t, ndim=1] mix_weights):
     """Loops over a list of files using mu and mix_weights for
     a fitted model, assigns each datapoint to one of the clusters,
     and compiles statistics on what the sequences assigned to each
     cluster look like. The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
-    items per position (mu.shape[2]). If these conditions are violated,
+    items per position (log_mu.shape[2]). If these conditions are violated,
     a segfault may occur. The Python wrapper checks all input data to
     ensure it meets these conditions. If you decide to use this function
     OUTSIDE the Python wrapper, you must implement these checks yourself.
@@ -231,7 +231,7 @@ def hard_cluster_assign(list xfiles,
     Args:
         xfiles (list): A list of .npy files for which statistics are desired.
             Should already have been checked for acceptability.
-        mu (np.ndarray): The model parameters (probability of each choice
+        log_mu (np.ndarray): The model parameters (log probability of each choice
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
@@ -241,7 +241,7 @@ def hard_cluster_assign(list xfiles,
             possibility. Same shape as mu. Dtype is uint32.
     """
     cdef np.ndarray[np.uint32_t, ndim=3] cluster_stats = \
-            np.zeros((mu.shape[0], mu.shape[1], mu.shape[2]), dtype=np.uint32)
+            np.zeros((log_mu.shape[0], log_mu.shape[1], log_mu.shape[2]), dtype=np.uint32)
     cdef np.ndarray[np.float64_t, ndim=2] log_mixweights = \
             np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))[:,None]
     cdef np.ndarray[np.uint8_t, ndim=2] x
@@ -250,22 +250,19 @@ def hard_cluster_assign(list xfiles,
     cdef np.ndarray[np.float64_t, ndim=2] resp
     cdef int errcode
         
-    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
-    mu = np.log(mu)
-
-    if mu.shape[0] != mix_weights.shape[0]:
+    if log_mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
 
     for xfile in xfiles:
         x = np.load(xfile)
-        resp = np.zeros((mu.shape[0], x.shape[0]))
+        resp = np.zeros((log_mu.shape[0], x.shape[0]))
         assignments = np.zeros((x.shape[0]), dtype=np.uint32)
         lnorm = np.zeros((x.shape[0]))
             
         #This function currently uses single threading only, although this
         #can easily be updated. TODO: Add multithreading for this.
-        errcode = getProbsCExt_main(&x[0,0], &mu[0,0,0], &resp[0,0],
-                        mu.shape[0], mu.shape[1], mu.shape[2],
+        errcode = getProbsCExt_main(&x[0,0], &log_mu[0,0,0], &resp[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
                         x.shape[0], x.shape[1],
                         1)
         resp += log_mixweights
@@ -283,7 +280,7 @@ def hard_cluster_assign(list xfiles,
 
 
 def multimix_predict(np.ndarray[np.uint8_t, ndim=2] x,
-                np.ndarray[np.float64_t, ndim=3] mu,
+                np.ndarray[np.float64_t, ndim=3] log_mu,
                 np.ndarray[np.float64_t, ndim=1] mix_weights,
                 int n_threads = 1):
     """Assigns each input datapoint in an array to one of the
@@ -291,7 +288,7 @@ def multimix_predict(np.ndarray[np.uint8_t, ndim=2] x,
 
     The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
-    items per position (mu.shape[2]). If these conditions are violated,
+    items per position (log_mu.shape[2]). If these conditions are violated,
     a segfault may occur. The Python wrapper checks all input data to
     ensure it meets these conditions. If you decide to use this function
     OUTSIDE the Python wrapper, you must implement these checks yourself.
@@ -299,7 +296,7 @@ def multimix_predict(np.ndarray[np.uint8_t, ndim=2] x,
     Args:
         x (np.ndarray): An array of type np.uint8 with input
             data. Should already have been checked for acceptability.
-        mu (np.ndarray): The model parameters (probability of each choice
+        log_mu (np.ndarray): The model parameters (log probability of each choice
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
@@ -313,16 +310,14 @@ def multimix_predict(np.ndarray[np.uint8_t, ndim=2] x,
     cdef np.ndarray[np.float64_t, ndim=1] log_mixweights
     cdef np.ndarray[np.uint32_t, ndim=1] cluster_assignments
 
-    if mu.shape[0] != mix_weights.shape[0]:
+    if log_mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
 
-    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
-    mu[:] = np.log(mu)
     log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
 
-    probs = np.zeros((mu.shape[0], x.shape[0]))
-    errcode = getProbsCExt_main(&x[0,0], &mu[0,0,0], &probs[0,0],
-                        mu.shape[0], mu.shape[1], mu.shape[2],
+    probs = np.zeros((log_mu.shape[0], x.shape[0]))
+    errcode = getProbsCExt_main(&x[0,0], &log_mu[0,0,0], &probs[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
                         x.shape[0], x.shape[1], n_threads)
     probs += log_mixweights[:,None]
     cluster_assignments = probs.argmax(axis=0).astype(np.uint32)
@@ -330,7 +325,7 @@ def multimix_predict(np.ndarray[np.uint8_t, ndim=2] x,
 
 
 def multimix_cluster_probs(np.ndarray[np.uint8_t, ndim=2] x,
-                np.ndarray[np.float64_t, ndim=3] mu,
+                np.ndarray[np.float64_t, ndim=3] log_mu,
                 np.ndarray[np.float64_t, ndim=1] mix_weights,
                 int n_threads = 1,
                 bint use_mixweights = True):
@@ -339,7 +334,7 @@ def multimix_cluster_probs(np.ndarray[np.uint8_t, ndim=2] x,
 
     The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
-    items per position (mu.shape[2]). If these conditions are violated,
+    items per position (log_mu.shape[2]). If these conditions are violated,
     a segfault may occur. The Python wrapper checks all input data to
     ensure it meets these conditions. If you decide to use this function
     OUTSIDE the Python wrapper, you must implement these checks yourself.
@@ -347,7 +342,7 @@ def multimix_cluster_probs(np.ndarray[np.uint8_t, ndim=2] x,
     Args:
         x (np.ndarray): An array of type np.uint8 with input
             data. Should already have been checked for acceptability.
-        mu (np.ndarray): The model parameters (probability of each choice
+        log_mu (np.ndarray): The model parameters (probability of each choice
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
@@ -363,16 +358,14 @@ def multimix_cluster_probs(np.ndarray[np.uint8_t, ndim=2] x,
     cdef np.ndarray[np.float64_t, ndim=2] probs
     cdef np.ndarray[np.float64_t, ndim=1] log_mixweights
 
-    if mu.shape[0] != mix_weights.shape[0]:
+    if log_mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
 
-    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
-    mu[:] = np.log(mu)
     log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
 
-    probs = np.zeros((mu.shape[0], x.shape[0]))
-    errcode = getProbsCExt_main(&x[0,0], &mu[0,0,0], &probs[0,0],
-                        mu.shape[0], mu.shape[1], mu.shape[2],
+    probs = np.zeros((log_mu.shape[0], x.shape[0]))
+    errcode = getProbsCExt_main(&x[0,0], &log_mu[0,0,0], &probs[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
                         x.shape[0], x.shape[1], n_threads)
     if use_mixweights:
         probs += log_mixweights[:,None]
@@ -380,7 +373,7 @@ def multimix_cluster_probs(np.ndarray[np.uint8_t, ndim=2] x,
 
     
 def multimix_loglik_offline(list xfiles,
-        np.ndarray[np.float64_t, ndim=3] mu,
+        np.ndarray[np.float64_t, ndim=3] log_mu,
         np.ndarray[np.float64_t, ndim=1] mix_weights,
         int n_threads):
     """Determines the log likelihood of a dataset represented
@@ -388,7 +381,7 @@ def multimix_loglik_offline(list xfiles,
 
     The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
-    items per position (mu.shape[2]). If these conditions are violated,
+    items per position (log_mu.shape[2]). If these conditions are violated,
     a segfault may occur. The Python wrapper checks all input data to
     ensure it meets these conditions. If you decide to use this function
     OUTSIDE the Python wrapper, you must implement these checks yourself.
@@ -396,7 +389,7 @@ def multimix_loglik_offline(list xfiles,
     Args:
         xfiles (list): A list of .npy files with input data.
             Should already have been checked for acceptability.
-        mu (np.ndarray): The model parameters (probability of each choice
+        log_mu (np.ndarray): The model parameters (log probability of each choice
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
@@ -410,21 +403,19 @@ def multimix_loglik_offline(list xfiles,
     cdef np.ndarray[np.float64_t, ndim=1] probs
     cdef np.ndarray[np.uint8_t, ndim=2] x
 
-    if mu.shape[0] != mix_weights.shape[0]:
+    if log_mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
 
-    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
-    mu[:] = np.log(mu)
     log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
 
     loglik = 0
 
     for xfile in xfiles:
         x = np.load(xfile)
-        resp = np.zeros((mu.shape[0], x.shape[0]))
+        resp = np.zeros((log_mu.shape[0], x.shape[0]))
         probs = np.zeros((x.shape[0]))
-        errcode = getProbsCExt_main(&x[0,0], &mu[0,0,0], &resp[0,0],
-                        mu.shape[0], mu.shape[1], mu.shape[2],
+        errcode = getProbsCExt_main(&x[0,0], &log_mu[0,0,0], &resp[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
                         x.shape[0], x.shape[1], n_threads)
         resp += log_mixweights[:,None]
         probs[:] = logsumexp(resp, axis=0)
@@ -433,7 +424,7 @@ def multimix_loglik_offline(list xfiles,
 
 
 def multimix_score(np.ndarray[np.uint8_t, ndim=2] x,
-        np.ndarray[np.float64_t, ndim=3] mu,
+        np.ndarray[np.float64_t, ndim=3] log_mu,
         np.ndarray[np.float64_t, ndim=1] mix_weights,
         int n_threads = 1):
     """Determines the log likelihood of each input datapoint
@@ -441,14 +432,14 @@ def multimix_score(np.ndarray[np.uint8_t, ndim=2] x,
 
     The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
-    items per position (mu.shape[2]). If these conditions are violated,
+    items per position (log_mu.shape[2]). If these conditions are violated,
     a segfault may occur. The Python wrapper checks all input data to
     ensure it meets these conditions. If you decide to use this function
     OUTSIDE the Python wrapper, you must implement these checks yourself.
 
     Args:
         x (np.ndarray): An input data array.
-        mu (np.ndarray): The model parameters (probability of each choice
+        log_mu (np.ndarray): The model parameters (probability of each choice
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
@@ -462,18 +453,16 @@ def multimix_score(np.ndarray[np.uint8_t, ndim=2] x,
     cdef np.ndarray[np.float64_t, ndim=1] log_mixweights
     cdef np.ndarray[np.float64_t, ndim=1] probs
 
-    if mu.shape[0] != mix_weights.shape[0]:
+    if log_mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
 
-    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
-    mu[:] = np.log(mu)
     log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
 
-    resp = np.zeros((mu.shape[0], x.shape[0]))
+    resp = np.zeros((log_mu.shape[0], x.shape[0]))
     probs = np.zeros((x.shape[0]))
 
-    errcode = getProbsCExt_main(&x[0,0], &mu[0,0,0], &resp[0,0],
-                        mu.shape[0], mu.shape[1], mu.shape[2],
+    errcode = getProbsCExt_main(&x[0,0], &log_mu[0,0,0], &resp[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
                         x.shape[0], x.shape[1], n_threads)
     resp += log_mixweights[:,None]
     probs[:] = logsumexp(resp, axis=0)
@@ -482,7 +471,7 @@ def multimix_score(np.ndarray[np.uint8_t, ndim=2] x,
 
 
 def multimix_score_terminal_masked(np.ndarray[np.uint8_t, ndim=2] x,
-        np.ndarray[np.float64_t, ndim=3] mu,
+        np.ndarray[np.float64_t, ndim=3] log_mu,
         np.ndarray[np.float64_t, ndim=1] mix_weights,
         int start_col, int end_col, int n_threads = 1):
     """Determines the log likelihood of each input datapoint
@@ -491,14 +480,14 @@ def multimix_score_terminal_masked(np.ndarray[np.uint8_t, ndim=2] x,
 
     The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
-    items per position (mu.shape[2]). If these conditions are violated,
+    items per position (log_mu.shape[2]). If these conditions are violated,
     a segfault may occur. The Python wrapper checks all input data to
     ensure it meets these conditions. If you decide to use this function
     OUTSIDE the Python wrapper, you must implement these checks yourself.
 
     Args:
         x (np.ndarray): An input data array.
-        mu (np.ndarray): The model parameters (probability of each choice
+        log_mu (np.ndarray): The model parameters (log probability of each choice
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
@@ -514,22 +503,20 @@ def multimix_score_terminal_masked(np.ndarray[np.uint8_t, ndim=2] x,
     cdef np.ndarray[np.float64_t, ndim=1] log_mixweights
     cdef np.ndarray[np.float64_t, ndim=1] probs
 
-    if mu.shape[0] != mix_weights.shape[0]:
+    if log_mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
     if start_col < 0 or start_col >= end_col:
         raise ValueError("Improper start and end columns supplied.")
-    if end_col > mu.shape[1]:
+    if end_col > log_mu.shape[1]:
         raise ValueError("Improper start and end columns supplied.")
 
-    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
-    mu[:] = np.log(mu)
     log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
 
-    resp = np.zeros((mu.shape[0], x.shape[0]))
+    resp = np.zeros((log_mu.shape[0], x.shape[0]))
     probs = np.zeros((x.shape[0]))
 
-    errcode = getProbsCExt_terminal_masked_main(&x[0,0], &mu[0,0,0], &resp[0,0],
-                        mu.shape[0], mu.shape[1], mu.shape[2],
+    errcode = getProbsCExt_terminal_masked_main(&x[0,0], &log_mu[0,0,0], &resp[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
                         x.shape[0], x.shape[1], n_threads,
                         start_col, end_col)
     resp += log_mixweights[:,None]
@@ -538,7 +525,7 @@ def multimix_score_terminal_masked(np.ndarray[np.uint8_t, ndim=2] x,
 
 
 def multimix_score_gapped(np.ndarray[np.uint8_t, ndim=2] x,
-        np.ndarray[np.float64_t, ndim=3] mu,
+        np.ndarray[np.float64_t, ndim=3] log_mu,
         np.ndarray[np.float64_t, ndim=1] mix_weights,
         int n_threads = 1):
     """Determines the log likelihood of each input datapoint
@@ -547,14 +534,14 @@ def multimix_score_gapped(np.ndarray[np.uint8_t, ndim=2] x,
 
     The data should be of type np.uint8 and
     should not contain any values larger than the number of possible
-    items per position (mu.shape[2]). If these conditions are violated,
+    items per position (log_mu.shape[2]). If these conditions are violated,
     a segfault may occur. The Python wrapper checks all input data to
     ensure it meets these conditions. If you decide to use this function
     OUTSIDE the Python wrapper, you must implement these checks yourself.
 
     Args:
         x (np.ndarray): An input data array.
-        mu (np.ndarray): The model parameters (probability of each choice
+        log_mu (np.ndarray): The model parameters (log probability of each choice
             at each position). Shape is (n_components, sequence_length,
             num_possible_items).
         mix_weights (np.ndarray): The mixture weights for each component.
@@ -570,18 +557,16 @@ def multimix_score_gapped(np.ndarray[np.uint8_t, ndim=2] x,
     cdef np.ndarray[np.float64_t, ndim=1] log_mixweights
     cdef np.ndarray[np.float64_t, ndim=1] probs
 
-    if mu.shape[0] != mix_weights.shape[0]:
+    if log_mu.shape[0] != mix_weights.shape[0]:
         raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
 
-    mu[mu<MINIMUM_PROB_VAL] = MINIMUM_PROB_VAL
-    mu[:] = np.log(mu)
     log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
 
-    resp = np.zeros((mu.shape[0], x.shape[0]))
+    resp = np.zeros((log_mu.shape[0], x.shape[0]))
     probs = np.zeros((x.shape[0]))
 
-    errcode = getProbsCExt_gapped_main(&x[0,0], &mu[0,0,0], &resp[0,0],
-                        mu.shape[0], mu.shape[1], mu.shape[2],
+    errcode = getProbsCExt_gapped_main(&x[0,0], &log_mu[0,0,0], &resp[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
                         x.shape[0], x.shape[1], n_threads)
     resp += log_mixweights[:,None]
     probs[:] = logsumexp(resp, axis=0)
