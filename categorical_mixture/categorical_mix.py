@@ -4,11 +4,12 @@ datapoints."""
 import copy
 from multiprocessing import Pool
 import numpy as np
+from scipy.special import logsumexp
 from .constants import constants
 from core_cpu_func_wrappers import em_online, em_offline, multimix_predict
 from core_cpu_func_wrappers import multimix_loglik_offline, multimix_score, multimix_cluster_probs
 from core_cpu_func_wrappers import hard_cluster_assign, multimix_score_terminal_masked
-from core_cpu_func_wrappers import multimix_score_gapped
+from core_cpu_func_wrappers import multimix_score_gapped, multimix_cluster_probs_terminal_masked
 
 
 
@@ -664,7 +665,7 @@ class CategoricalMixture:
 
     def predict_proba(self, xdata, n_threads = 1, use_mixweights = True):
         """Predict the probability of each datapoint in the input
-            array.
+            array for each cluster.
 
         Args:
             xdata (np.ndarray): A numpy array of type np.uint8, shape 2.
@@ -674,8 +675,8 @@ class CategoricalMixture:
                 mixture weights.
 
         Returns:
-            probs (np.ndarray): An array of shape (xdata.shape[0])
-                with the calculated probs.
+            probs (np.ndarray): An array of shape (xdata.shape[0], n_components)
+                with the calculated probs for each datapoint for each cluster.
 
         Raises:
             ValueError: Raised if unexpected inputs are supplied.
@@ -686,6 +687,41 @@ class CategoricalMixture:
         return multimix_cluster_probs(xdata, self.log_mu_mix,
                 self.mix_weights, n_threads, use_mixweights)
 
+
+    def terminal_masked_predict_proba(self, xdata, start_col = 0,
+            end_col = 1, n_threads = 1, use_mixweights = True):
+        """Predict the probability of each datapoint in the input
+            array for each cluster, but with a "mask" such that amino acids
+            at the c-terminal or n-terminal are masked out and ignored.
+            This is useful primarily when there is a large n- or c-terminal
+            deletion and we would like to assess the humanness of the remaining
+            sequence ignoring this region.
+
+        Args:
+            xdata (np.ndarray): A numpy array of type np.uint8, shape 2.
+            start_col (int): The first column of the input to use;
+                previous columns are masked.
+            end_col (int): The last column of the input to use;
+                remaining columns are masked.
+            n_threads (int): The number of threads to use.
+            use_mixweights (bool): If True, take mixture weights into
+                account; otherwise, generate p(x | cluster = a) ignoring
+                mixture weights.
+
+        Returns:
+            probs (np.ndarray): An array of shape (xdata.shape[0], n_components)
+                with the calculated probs for each datapoint for each cluster.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        if start_col < 0 or start_col >= end_col or end_col > self.mu_mix.shape[1]:
+            raise ValueError("Inappropriate col start / col end passed.")
+        return multimix_cluster_probs_terminal_masked(xdata, self.log_mu_mix,
+                self.mix_weights, n_threads, use_mixweights)
 
 
 
@@ -829,10 +865,6 @@ class CategoricalMixture:
             xdata (np.ndarray): An array with the input data,
                 of type np.uint8.
             n_threads (int): the number of threads to use.
-            start_col (int): The first column of the input to use;
-                previous columns are masked.
-            end_col (int): The last column of the input to use;
-                remaining columns are masked.
 
         Returns:
             loglik (np.ndarray): A float64 array of shape (x.shape[0])
@@ -847,3 +879,32 @@ class CategoricalMixture:
             raise ValueError("Model not fitted yet.")
         return multimix_score_gapped(xdata, self.log_mu_mix, self.mix_weights,
                 n_threads)
+
+
+    def per_position_probs(self, xdata):
+        """Generate the probability of each position in the input
+        sequence considered independently of all others.
+
+        Args:
+            xdata (np.ndarray): An array with the input data,
+                of type np.uint8. For this function, it should
+                be a single sequence, i.e. x.shape[0] should be 1.
+
+        Returns:
+            loglik (np.ndarray): A float64 array of shape (x.shape[1])
+                where each element is the log-likelihood of that
+                datapoint given the model.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if xdata.shape[0] != 1:
+            raise ValueError("For per position probs, only one sequence should "
+                    "be input.")
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        log_probs = np.vstack([self.log_mu_mix[i, np.arange(self.log_mu_mix.shape[1]), xdata.flatten()]
+            for i in range(self.log_mu_mix.shape[0])])
+        log_probs += np.log(self.mix_weights)[:,None]
+        return logsumexp(log_probs, axis=0)

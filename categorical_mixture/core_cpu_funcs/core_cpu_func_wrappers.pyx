@@ -371,6 +371,61 @@ def multimix_cluster_probs(np.ndarray[np.uint8_t, ndim=2] x,
         probs += log_mixweights[:,None]
     return probs
 
+
+def multimix_cluster_probs_terminal_masked(np.ndarray[np.uint8_t, ndim=2] x,
+                np.ndarray[np.float64_t, ndim=3] log_mu,
+                np.ndarray[np.float64_t, ndim=1] mix_weights,
+                int start_col, int end_col, int n_threads = 1,
+                bint use_mixweights = True):
+    """Determines the probability of each datapoint given each
+    cluster, but with gaps at the n and c terminal masked. Useful if
+    we want to assign to a cluster without considering large n- and
+    c- terminal deletions (if present).
+
+    The data should be of type np.uint8 and
+    should not contain any values larger than the number of possible
+    items per position (log_mu.shape[2]). If these conditions are violated,
+    a segfault may occur. The Python wrapper checks all input data to
+    ensure it meets these conditions. If you decide to use this function
+    OUTSIDE the Python wrapper, you must implement these checks yourself.
+
+    Args:
+        x (np.ndarray): An array of type np.uint8 with input
+            data. Should already have been checked for acceptability.
+        log_mu (np.ndarray): The model parameters (probability of each choice
+            at each position). Shape is (n_components, sequence_length,
+            num_possible_items).
+        mix_weights (np.ndarray): The mixture weights for each component.
+        start_col (int): The first column to use; all previous are masked.
+        end_col (int): The last column to use; all previous are masked.
+        n_threads (int): The number of threads to use.
+        use_mixweights (bint): If True, take mixture weights into account.
+            If False, then do not.
+
+    Returns:
+        probs (np.ndarray): The probability of each datapoint for
+            each cluster as a float64 array of shape (n_components,
+            x.shape[0]).
+    """
+    cdef np.ndarray[np.float64_t, ndim=2] probs
+    cdef np.ndarray[np.float64_t, ndim=1] log_mixweights
+
+    if log_mu.shape[0] != mix_weights.shape[0]:
+        raise ValueError("Inputs to wrapped C++ function have incorrect shapes.")
+
+    log_mixweights = np.log(mix_weights.clip(min=MINIMUM_PROB_VAL))
+
+    probs = np.zeros((log_mu.shape[0], x.shape[0]))
+    errcode = getProbsCExt_terminal_masked_main(&x[0,0], &log_mu[0,0,0], &probs[0,0],
+                        log_mu.shape[0], log_mu.shape[1], log_mu.shape[2],
+                        x.shape[0], x.shape[1], n_threads,
+                        start_col, end_col)
+    if use_mixweights:
+        probs += log_mixweights[:,None]
+    return probs
+
+
+
     
 def multimix_loglik_offline(list xfiles,
         np.ndarray[np.float64_t, ndim=3] log_mu,
