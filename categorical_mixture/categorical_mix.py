@@ -721,8 +721,7 @@ class CategoricalMixture:
         if start_col < 0 or start_col >= end_col or end_col > self.mu_mix.shape[1]:
             raise ValueError("Inappropriate col start / col end passed.")
         return multimix_cluster_probs_terminal_masked(xdata, self.log_mu_mix,
-                self.mix_weights, n_threads, use_mixweights)
-
+                self.mix_weights, start_col, end_col, n_threads, use_mixweights)
 
 
 
@@ -879,32 +878,3 @@ class CategoricalMixture:
             raise ValueError("Model not fitted yet.")
         return multimix_score_gapped(xdata, self.log_mu_mix, self.mix_weights,
                 n_threads)
-
-
-    def per_position_probs(self, xdata):
-        """Generate the probability of each position in the input
-        sequence considered independently of all others.
-
-        Args:
-            xdata (np.ndarray): An array with the input data,
-                of type np.uint8. For this function, it should
-                be a single sequence, i.e. x.shape[0] should be 1.
-
-        Returns:
-            loglik (np.ndarray): A float64 array of shape (x.shape[1])
-                where each element is the log-likelihood of that
-                datapoint given the model.
-
-        Raises:
-            ValueError: Raised if unexpected inputs are supplied.
-        """
-        self._check_input_array(xdata)
-        if xdata.shape[0] != 1:
-            raise ValueError("For per position probs, only one sequence should "
-                    "be input.")
-        if self.mu_mix is None or self.mix_weights is None:
-            raise ValueError("Model not fitted yet.")
-        log_probs = np.vstack([self.log_mu_mix[i, np.arange(self.log_mu_mix.shape[1]), xdata.flatten()]
-            for i in range(self.log_mu_mix.shape[0])])
-        log_probs += np.log(self.mix_weights)[:,None]
-        return logsumexp(log_probs, axis=0)

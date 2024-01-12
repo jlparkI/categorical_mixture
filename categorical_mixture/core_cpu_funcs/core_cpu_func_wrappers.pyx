@@ -424,8 +424,6 @@ def multimix_cluster_probs_terminal_masked(np.ndarray[np.uint8_t, ndim=2] x,
         probs += log_mixweights[:,None]
     return probs
 
-
-
     
 def multimix_loglik_offline(list xfiles,
         np.ndarray[np.float64_t, ndim=3] log_mu,
