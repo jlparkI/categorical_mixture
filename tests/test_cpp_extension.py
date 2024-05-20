@@ -1,12 +1,9 @@
 """Runs basic tests on the c-extension to ensure that
-calculations are correct, bypassing the Python
-wrapper (ordinarily a bad idea, since these check to
-ensure the array is C-contiguous etc., but fine here
-since we can enforce these conditions in the test."""
+calculations are correct."""
 import os
 import unittest
 import numpy as np
-from scipy.special import logsumexp
+from categorical_mix.utilities.special_functions import logsumexp
 from core_cpu_func_wrappers import em_online, em_offline
 from categorical_mixture.categorical_mix import CategoricalMixture
 
@@ -22,7 +19,7 @@ def get_initial_params(seq_length = 408, num_elements = 21):
     return cat_mix._get_init_params(123)
 
 
-def ground_truth_calcs(test_data, mix_weights, mu_in):
+def ground_truth_em_calcs(test_data, mix_weights, mu_in):
     """Generates a 'ground-truth' to compare
     against the em calculation routines."""
     log_mixweights = np.log(mix_weights.clip(min=1e-14))[:,None]
@@ -71,7 +68,7 @@ class TestBasicCPPCalcs(unittest.TestCase):
         xdata = np.load(data_path)
 
         mix_weights, mu_init = get_initial_params()
-        ground_truth = ground_truth_calcs(xdata, mix_weights, mu_init)
+        ground_truth = ground_truth_em_calcs(xdata, mix_weights, mu_init)
 
         test_results = em_online(xdata, mix_weights, mu_init.copy(), 1)
         for test_res, gt_res in zip(test_results, ground_truth):
@@ -86,7 +83,7 @@ class TestBasicCPPCalcs(unittest.TestCase):
         xfiles = [os.path.abspath(data_path)]
 
         mix_weights, mu_init = get_initial_params()
-        ground_truth = ground_truth_calcs(xdata, mix_weights, mu_init)
+        ground_truth = ground_truth_em_calcs(xdata, mix_weights, mu_init)
 
         test_results = em_offline(xfiles, mix_weights, mu_init.copy(), 1)
         for test_res, gt_res in zip(test_results, ground_truth):
