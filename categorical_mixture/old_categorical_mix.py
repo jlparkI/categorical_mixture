@@ -1,22 +1,25 @@
 """Implements the CategoricalMixture class, for all operations involved
-in generating mixture model predictions for new datapoints. The tools
-necessary to fit the model (via EM) are in a separate repo.
-Fitting right now is strictly via EM although we may evaluate
-variational methods in future."""
+in fitting the mixture model and in generating predictions for new
+datapoints."""
 import copy
 from multiprocessing import Pool
 import numpy as np
-from .utilities.special_functions import logsumexp
-from .utilities.catmix_utilities import get_ndatapoints, em_online, em_offline
-from .utilities.catmix_utilities import multimix_loglik, multimix_loglik_offline
+from scipy.special import logsumexp
 from .constants import constants
-from categorical_mix_cpp_ext import getProbsCExt, getProbsCExt_masked, mask_terminal_deletions
+from core_cpu_func_wrappers import em_online, em_offline, multimix_predict
+from core_cpu_func_wrappers import multimix_loglik_offline, multimix_score, multimix_cluster_probs
+from core_cpu_func_wrappers import hard_cluster_assign, multimix_score_terminal_masked
+from core_cpu_func_wrappers import multimix_score_gapped, multimix_cluster_probs_terminal_masked
+
 
 
 
 class CategoricalMixture:
     """A CategoricalMixture model, with all the methods necessary
-    to score and do inference.
+    to fit the model, score it and do inference. This
+    CategoricalMixture is fitted using EM -- if it ever proves
+    useful, we can add an alternative based on variational
+    inference.
 
     Attributes:
         mu_mix (np.ndarray): Array of type np.float64, shape (self.n_components,
@@ -29,8 +32,6 @@ class CategoricalMixture:
             Initialized to None, only converted to array once model is fitted.
         mix_weights (np.ndarray): Array of type np.float64, shape (self.n_components).
             The weight for each distribution in the mixture.
-        log_mix_weights (np.ndarray): Array of type np.float64, shape (self.n_components).
-            The log of the mixture weight for each distribution in the mixture.
         n_components (int): The number of components.
         num_possible_items (int): The number of possible choices
             at each position in the sequence.
@@ -70,7 +71,6 @@ class CategoricalMixture:
             raise ValueError("Sequence length must be positive.")
 
         self.mix_weights = None
-        self.log_mix_weights = None
         self.mu_mix = None
         self.log_mu_mix = None
         self.n_components = n_components
@@ -102,225 +102,59 @@ class CategoricalMixture:
         if mix_weights.shape[0] != self.n_components:
             raise ValueError("mix_weights has an inappropriate shape.")
 
-        if not mu_mix.flags["C_CONTIGUOUS"] or not mix_weights.flags["C_CONTIGUOUS"]:
-            raise ValueError("Non-C-contiguous arrays supplied.")
-
         self.mix_weights = mix_weights
-        self.log_mix_weights = mix_weights.copy()
-        self.log_mix_weights[self.log_mix_weights < constants.CATMIX_MINIMUM_PROB_VAL] = \
-                constants.CATMIX_MINIMUM_PROB_VAL
-        self.log_mix_weights = np.log(self.log_mix_weights)
-
         self.mu_mix = mu_mix
         self.log_mu_mix = mu_mix.copy()
-        self.log_mu_mix[self.log_mu_mix < constants.CATMIX_MINIMUM_PROB_VAL] = \
-                constants.CATMIX_MINIMUM_PROB_VAL
+        self.log_mu_mix[self.log_mu_mix < constants.MINIMUM_PROB_VAL] = constants.MINIMUM_PROB_VAL
         self.log_mu_mix[:] = np.log(self.log_mu_mix)
 
 
 
-    def _check_input_array(self, xdata, n_threads):
-        """Checks an input array to make sure that all have
-        the correct format to ensure that no problems will be encountered.
+
+    def _get_ndatapoints(self, xdata):
+        """If the input is a list of files, this function
+        quickly count the numbers of datapoints without
+        reading any of them into memory. If it is an array,
+        it returns the dim[0] of the array.
 
         Args:
-            x (np.ndarray): A numpy array with the input data.
-            n_threads (int): The number of threads requested.
+            xdata: Either a list of file paths to numpy arrays
+                saved on disk or a numpy array.
 
         Raises:
-            ValueError: A ValueError is raised if unacceptable
-                input data is supplied.
+            ValueError: A ValueError is raised if an unexpected
+                data type is supplied.
         """
-        if not isinstance(xdata, np.ndarray):
-            raise ValueError("Unexpected input supplied.")
-        if np.max(xdata) >= self.num_possible_items or np.min(xdata) < 0:
-            raise ValueError("Values in input data are out of range.")
-        if xdata.dtype != "uint8":
-            raise ValueError("Unexpected datatype for input data.")
-        if len(xdata.shape) != 2:
-            raise ValueError("Unexpected shape for input data.")
-        if xdata.shape[1] != self.sequence_length or xdata.shape[0] < 1:
-            raise ValueError("Unexpected shape for input data.")
-        if not xdata.flags["C_CONTIGUOUS"]:
-            raise ValueError("Input data is not C-contiguous.")
+        if isinstance(xdata, np.ndarray):
+            return xdata.shape[0]
 
-        if n_threads <= 0:
-            raise ValueError("n_threads should be a positive integer.")
-        if not isinstance(n_threads, int):
-            raise ValueError("n_threads should be a positive integer.")
+        if not isinstance(xdata, list):
+            raise ValueError("Tried to supply data that was neither a "
+                    "file list nor an array.")
+
+        ndatapoints = 0
+        for xfile in xdata:
+            with open(xfile, 'rb') as fhandle:
+                _, _ = np.lib.format.read_magic(fhandle)
+                xshape, _, _ = np.lib.format.read_array_header_1_0(fhandle)
+                ndatapoints += xshape[0]
+        return ndatapoints
 
 
-    def prep_masked_array(self, xdata, mask = None, mask_terminal_dels = False,
-            mask_gaps = False):
-        """Prepares a masked version of an input array if any masking options are
-        supplied.
+    def _get_init_params(self, random_state):
+        """Initializes the model using the random seed to generate
+        starting parameters.
 
         Args:
-            xdata (np.ndarray): A 2d numpy array of type np.uint8.
-            mask (np.ndarray): Either None or a numpy array of type bool
-                and shape (xdata.shape[1]). If not None, indicated
-                positions are masked, i.e. are not taken into account
-                when calculating the score.
-            mask_gaps (bool): If True, all non-filled IMGT positions in the sequence
-                are ignored when calculating the score. This is useful when your
-                sequence has unusual deletions and you would like to ignore these.
-            mask_terminal_dels (bool): If True, ignore N- and C-terminal
-                deletions when assigning to a cluster.
-
-        Returns:
-            xmasked (np.ndarray): A 2d numpy array of type np.uint8.
-
-        Raises:
-            ValueError: A ValueError is raised if bad inputs are supplied.
+            random_state (int): A seed to the random number generator.
         """
-        xmasked = xdata.copy()
-
-        if mask is not None:
-            if not isinstance(mask, np.ndarray):
-                raise ValueError("Mask must be a numpy array.")
-            if mask.shape[0] != xdata.shape[1]:
-                raise ValueError("Mask shape must be consistent with xdata shape.")
-            if len(mask.shape) != 1:
-                raise ValueError("Mask must be a 1d array.")
-
-            #There is no amino acid 21, so we use this as a convenient "please ignore"
-            #indicator.
-            xmasked[:,~mask] = 21
-
-        if mask_terminal_dels:
-            mask_terminal_deletions(xmasked)
-
-        if mask_gaps:
-            xmasked[xmasked==20] = 21
-
-        return xmasked
-
-
-
-    def predict(self, xdata, mask = None, mask_terminal_dels = False,
-            mask_gaps = False, use_mixweights = True, return_raw_probs = False,
-            n_threads = 1):
-        """Determine the most probable cluster for each datapoint
-        in a numpy array. Note that you should also check the
-        overall probability of each datapoint. If a datapoint is
-        very different from your training set, it will have
-        very low overall probability, but this function will
-        still assign it to the most likely cluster -- whichever
-        that is -- by default.
-
-        Args:
-            xdata (np.ndarray): A 2d numpy array of type np.uint8.
-            n_threads (int): The number of threads to use.
-            mask (np.ndarray): Either None or a numpy array of type bool
-                and shape (xdata.shape[1]). If not None, indicated
-                positions are masked, i.e. are not taken into account
-                when calculating the score.
-            mask_gaps (bool): If True, all non-filled IMGT positions in the sequence
-                are ignored when calculating the score. This is useful when your
-                sequence has unusual deletions and you would like to ignore these.
-            mask_terminal_dels (bool): If True, ignore N- and C-terminal
-                deletions when assigning to a cluster.
-            use_mixweights (bool): If True, take mixture weights into
-                account; otherwise, find the closest cluster (even if
-                it is a low-probability cluster).
-            return_raw_probs (bool): If True, return the raw probabilities
-                instead of cluster assignments.
-
-        Returns:
-            preds (np.ndarray): EITHER an array of shape (xdata.shape[0])
-                containing a number from 0 to self.n_components - 1
-                indicating the predicted cluster for each datapoint if
-                return_raw_probs is False, OR an array of shape (ncomponents,
-                xdata.shape[0]) if return_raw_probs is True, indicating
-                the probability of each cluster for each datapoint.
-
-        Raises:
-            ValueError: Raised if unexpected inputs are supplied.
-        """
-        self._check_input_array(xdata, n_threads)
-        if self.log_mu_mix is None or self.log_mix_weights is None:
-            raise ValueError("Model not fitted yet.")
-
-        resp = np.zeros((self.log_mu_mix.shape[0], xdata.shape[0]))
-
-        if mask is not None or mask_terminal_dels or mask_gaps:
-            xmasked = self.prep_masked_array(xdata, mask, mask_terminal_dels, mask_gaps)
-            getProbsCExt_masked(xmasked, self.log_mu_mix, resp, n_threads)
-
-        else:
-            getProbsCExt(xdata, self.log_mu_mix, resp, n_threads)
-
-        if use_mixweights:
-            resp += self.log_mix_weights[:,None]
-        if return_raw_probs:
-            return resp
-        cluster_assignments = resp.argmax(axis=0).astype(np.uint32)
-        return cluster_assignments
-
-
-
-    def score(self, xdata, mask = None, mask_terminal_dels = False,
-            mask_gaps = False, normalize_scores = False, n_threads = 1):
-        """Generate the overall log-likelihood of individual datapoints.
-        This is very useful to determine if a new datapoint is very
-        different from the training set. If the log-likelihood of
-        the new datapoints is much lower than the training set
-        distribution of log-likelihoods, it is fairly unlikely
-        that the new datapoint is a sample from the distribution
-        represented by the model, and you should not try to
-        assign it to a cluster.
-
-        Args:
-            xdata (np.ndarray): An array with the input data,
-                of type np.uint8.
-            mask (np.ndarray): Either None or a numpy array of type bool
-                and shape (xdata.shape[1]). If not None, indicated
-                positions are masked, i.e. are not taken into account
-                when calculating the score.
-            mask_terminal_dels (bool): If True, ignore N- and C-terminal
-                deletions when calculating a score.
-            mask_gaps (bool): If True, all non-filled IMGT positions in the sequence
-                are ignored when calculating the score. This is useful when your
-                sequence has unusual deletions and you would like to ignore these.
-            normalize_scores (bool): If True, normalize the score by dividing by
-                the number of non-masked residues in the input.
-            n_threads (int): the number of threads to use.
-
-        Returns:
-            loglik (np.ndarray): A float64 array of shape (x.shape[0])
-                where each element is the log-likelihood of that
-                datapoint given the model.
-
-        Raises:
-            ValueError: Raised if unexpected inputs are supplied.
-        """
-        self._check_input_array(xdata, n_threads)
-        if self.mu_mix is None or self.mix_weights is None:
-            raise ValueError("Model not fitted yet.")
-
-        resp = np.zeros((self.log_mu_mix.shape[0], xdata.shape[0]))
-        if mask is not None or mask_terminal_dels or mask_gaps:
-            xmasked = self.prep_masked_array(xdata, mask, mask_terminal_dels, mask_gaps)
-            getProbsCExt_masked(xmasked, self.log_mu_mix, resp, n_threads)
-            resp += self.log_mix_weights[:,None]
-            resp = logsumexp(resp, axis=0)
-            if normalize_scores:
-                resp /= (xmasked < 21).sum(axis=1)
-
-        else:
-            getProbsCExt(xdata, self.log_mu_mix, resp, n_threads)
-            resp += self.log_mix_weights[:,None]
-            resp = logsumexp(resp, axis=0)
-            if normalize_scores:
-                resp /= xdata.shape[1]
-
-        return resp
-
-
-
-
-    # The remaining functions are used when fitting, preparing to fit,
-    # or evaluating the quality of a fit.
+        rng = np.random.default_rng(random_state)
+        mix_weights = rng.uniform(size = self.n_components)
+        mix_weights /= mix_weights.sum()
+        mu_mix = rng.uniform(size = (self.n_components, self.sequence_length, \
+                self.num_possible_items))
+        mu_mix /= mu_mix.sum(axis=2)[:,:,None]
+        return mix_weights, mu_mix
 
 
     def _check_input_files(self, xlist):
@@ -351,24 +185,36 @@ class CategoricalMixture:
                 raise ValueError("Input data is not C-contiguous.")
 
 
-    def _get_init_params(self, random_state):
-        """Gets initial parameters for the catmix model.
+    def _check_input_array(self, xdata):
+        """Checks an input array to make sure that all have
+        the correct format to ensure that no problems will be encountered
+        during fitting.
 
         Args:
-            random_state (int): A seed to the random number generator.
-        """
-        rng = np.random.default_rng(random_state)
-        mix_weights = rng.uniform(size = self.n_components)
-        mix_weights /= mix_weights.sum()
-        mu_mix = rng.uniform(size = (self.n_components, self.sequence_length, \
-                self.num_possible_items))
-        mu_mix /= mu_mix.sum(axis=2)[:,:,None]
-        return mix_weights, mu_mix
+            x (np.ndarray): A numpy array with the input data.
 
+        Raises:
+            ValueError: A ValueError is raised if unacceptable
+                input data is supplied.
+        """
+        if not isinstance(xdata, np.ndarray):
+            raise ValueError("Unexpected input supplied.")
+        if np.max(xdata) >= self.num_possible_items or np.min(xdata) < 0:
+            raise ValueError("Values in input data are out of range.")
+        if xdata.dtype != "uint8":
+            raise ValueError("Unexpected datatype for input data.")
+        if len(xdata.shape) != 2:
+            raise ValueError("Unexpected shape for input data.")
+        if xdata.shape[1] != self.sequence_length or xdata.shape[0] < 1:
+            raise ValueError("Unexpected shape for input data.")
+        if not xdata.flags["C_CONTIGUOUS"]:
+            raise ValueError("Input data is not C-contiguous.")
 
 
     def fit(self, xdata, max_iter = 150, tol = 1e-3,
                 n_restarts = 1, random_state = 123,
+                enable_input_checking = True,
+                model_polishing = False,
                 n_processes = 1, n_threads = 1):
         """Fits the model to either an input array or a list
         of input files, potentially using multiple restarts if so
@@ -389,14 +235,32 @@ class CategoricalMixture:
             random_state (int): The random number generator seed for
                 the first restart (the second will use this value + 1,
                 the third will use this value + 2 etc.)
+            enable_input_checking (bool): Defaults to True.
+                If False, the inputs are not
+                checked to ensure they are valid. WARNING: DO NOT SET
+                THIS TO FALSE without careful consideration. If you
+                set this to False, the validity of your input data will
+                not be checked, which may result in serious fatal errors
+                if your input data is not what the model expects. The speed
+                gain from setting this to False is quite modest, so this
+                is really only worthwhile if (1) you've already checked your
+                input data and (2) your training set is very large (> 100
+                million datapoints).
+            model_polishing (bool): Defaults to False. If True, it
+                is assumed the model has already been fitted and you
+                merely want to refine the fit further by doing more
+                iterations with a smaller tol. If you set this to True
+                and the model has not yet been fitted a ValueError is
+                raised.
             n_processes (int): The number of processes to use if running
-                in parallel using multiprocessing. Only used
+                in parallel using multiprocessing or Ray. Only used
                 if xdata is a list of files, in which case it is split up
                 into sub-lists and each process is given a sublist. If xdata
                 is an array this argument is ignored. Note that
                 multiprocessing can greatly increase speed but also
                 increases memory consumption, because doubling
-                n_processes doubles the copies of the parameters in memory.
+                n_processes doubles the number of copies of the parameters
+                that are held in memory.
             n_threads (int): The number of threads to use on each array.
                 Unlike n_processes, increasing this value does not increase
                 memory consumption at all, but it does not give quite as
@@ -409,10 +273,12 @@ class CategoricalMixture:
             ValueError: Raised if unexpected inputs are supplied.
         """
         if isinstance(xdata, np.ndarray):
-            self._check_input_array(xdata, n_threads)
+            if enable_input_checking:
+                self._check_input_array(xdata)
             iter_runner = self._single_iter_online
         elif isinstance(xdata, list):
-            self._check_input_files(xdata)
+            if enable_input_checking:
+                self._check_input_files(xdata)
             if n_processes == 1 or len(xdata) < 3:
                 iter_runner = self._single_iter_offline
             else:
@@ -424,8 +290,9 @@ class CategoricalMixture:
         best_loss = -np.inf
         for restart in range(n_restarts):
             mix_weights, mu_mix, loss = iter_runner(xdata, tol,
-                    max_iter, random_state + restart,
-                    n_processes = n_processes, n_threads = n_threads)
+                            max_iter, random_state + restart,
+                            model_polishing, n_processes = n_processes,
+                            n_threads = n_threads)
             if loss > best_loss:
                 self.load_params(mu_mix.clip(1e-16), mix_weights)
                 best_loss = copy.deepcopy(loss)
@@ -436,6 +303,7 @@ class CategoricalMixture:
 
     def _single_iter_online(self, xdata, tol,
                     max_iter, random_state,
+                    model_polishing,
                     n_processes = 1,
                     n_threads = 1):
         """Fit the input numpy array with one random state,
@@ -449,6 +317,9 @@ class CategoricalMixture:
                 falls below this value, fitting is assumed to have
                 converged.
             random_state (int): The random number generator seed.
+            model_polishing (bool): Defaults to False. If True,
+                ignore random_state and use existing weights instead
+                of reinitializing.
             n_processes (int): This function accepts but does not use
                 n_processes (to remaing consistent with the other single_iter
                 functions).
@@ -458,7 +329,13 @@ class CategoricalMixture:
             ValueError: Raised if unexpected inputs are supplied.
         """
         loss = -np.inf
-        mix_weights, mu_mix = self._get_init_params(random_state)
+        if not model_polishing:
+            mix_weights, mu_mix = self._get_init_params(random_state)
+        else:
+            if self.mix_weights is None or self.mu_mix is None:
+                raise ValueError("Model polishing specified, but model has not "
+                        "been fitted yet.")
+            mix_weights, mu_mix = self.mix_weights, self.mu_mix
 
         for i in range(max_iter):
             prev_loss = copy.copy(loss)
@@ -480,6 +357,7 @@ class CategoricalMixture:
 
     def _single_iter_offline(self, xfiles, tol,
                     max_iter, random_state,
+                    model_polishing,
                     n_processes = 1,
                     n_threads = 1):
         """Fit the input list of on-disk numpy .npy files
@@ -494,6 +372,9 @@ class CategoricalMixture:
                 falls below this value, fitting is assumed to have
                 converged.
             random_state (int): The random number generator seed.
+            model_polishing (bool): Defaults to False. If True,
+                ignore random_state and use existing weights instead
+                of reinitializing.
             n_processes (int): This function accepts but does not use
                 n_processes (to remaing consistent with the other single_iter
                 functions).
@@ -503,7 +384,13 @@ class CategoricalMixture:
             ValueError: Raised if unexpected inputs are supplied.
         """
         loss = -np.inf
-        mix_weights, mu_mix = self._get_init_params(random_state)
+        if not model_polishing:
+            mix_weights, mu_mix = self._get_init_params(random_state)
+        else:
+            if self.mix_weights is None or self.mu_mix is None:
+                raise ValueError("Model polishing specified, but model has not "
+                        "been fitted yet.")
+            mix_weights, mu_mix = self.mix_weights, self.mu_mix
 
         for i in range(max_iter):
             prev_loss = copy.copy(loss)
@@ -524,6 +411,7 @@ class CategoricalMixture:
 
     def _single_iter_mp(self, xfiles, tol,
                     max_iter, random_state,
+                    model_polishing,
                     n_processes = 1,
                     n_threads = 1):
         """Fit the input list of on-disk numpy .npy files
@@ -539,6 +427,9 @@ class CategoricalMixture:
                 falls below this value, fitting is assumed to have
                 converged.
             random_state (int): The random number generator seed.
+            model_polishing (bool): Defaults to False. If True,
+                ignore random_state and use existing weights instead
+                of reinitializing.
             n_processes (int): The number of processes to use.
             n_threads (int): The number of threads to use on each array
                 in each process.
@@ -553,7 +444,13 @@ class CategoricalMixture:
                 range(0, len(xfiles), chunk_size)]
 
         loss = -np.inf
-        mix_weights, mu_mix = self._get_init_params(random_state)
+        if not model_polishing:
+            mix_weights, mu_mix = self._get_init_params(random_state)
+        else:
+            if self.mix_weights is None or self.mu_mix is None:
+                raise ValueError("Model polishing specified, but model has not "
+                        "been fitted yet.")
+            mix_weights, mu_mix = self.mix_weights, self.mu_mix
 
         for i in range(max_iter):
             prev_loss = copy.copy(loss)
@@ -599,13 +496,13 @@ class CategoricalMixture:
         Raises:
             ValueError: Raised if unexpected inputs are supplied.
         """
-        self._check_input_array(xdata, n_threads)
+        self._check_input_array(xdata)
 
         if self.mu_mix is None:
             raise ValueError("Model not fitted yet.")
 
-        ndatapoints = get_ndatapoints(xdata)
-        loglik = multimix_loglik(xdata, self.log_mu_mix, self.mix_weights,
+        ndatapoints = self._get_ndatapoints(xdata)
+        loglik = multimix_score(xdata, self.log_mu_mix, self.mix_weights,
                 n_threads).sum()
 
         nparams = self._get_nparams()
@@ -634,18 +531,17 @@ class CategoricalMixture:
 
         if self.mu_mix is None:
             raise ValueError("Model not fitted yet.")
-        ndatapoints = get_ndatapoints(xfiles)
+        ndatapoints = self._get_ndatapoints(xfiles)
 
         if len(xfiles) < 3 or n_processes == 1:
-            loglik = multimix_loglik_offline(xfiles, self.log_mu_mix,
-                    self.log_mix_weights, n_threads)
+            loglik = self._loglik_offline(xfiles)
         else:
             n_processes = min(len(xfiles), n_processes)
             chunk_size = int((len(xfiles) + n_processes - 1) / n_processes)
             print(f"Using MP. Chunk size: {chunk_size} files")
             xchunks = [xfiles[i:i + chunk_size] for i in
                     range(0, len(xfiles), chunk_size)]
-            caller_args = [(xchunk, self.log_mu_mix.copy(), self.log_mix_weights.copy(),
+            caller_args = [(xchunk, self.log_mu_mix.copy(), self.mix_weights.copy(),
                                 n_threads) for xchunk in xchunks]
             with Pool(n_processes) as mp_pool:
                 mp_res = list(mp_pool.starmap(multimix_loglik_offline, caller_args))
@@ -665,10 +561,10 @@ class CategoricalMixture:
         Raises:
             ValueError: raised if unexpected inputs are supplied.
         """
-        self._check_input_array(xdata, n_threads)
+        self._check_input_array(xdata)
         if self.mu_mix is None:
             raise ValueError("Model not fitted yet.")
-        loglik = multimix_loglik(xdata, self.log_mu_mix, self.mix_weights.copy(),
+        loglik = multimix_score(xdata, self.log_mu_mix, self.mix_weights.copy(),
                 n_threads).sum()
         return 2 * self._get_nparams() - 2 * loglik
 
@@ -695,18 +591,290 @@ class CategoricalMixture:
             raise ValueError("Model not fitted yet.")
 
         if len(xfiles) < 3 or n_processes == 1:
-            loglik = multimix_loglik_offline(xfiles, self.log_mu_mix,
-                    self.log_mix_weights, n_threads)
+            loglik = self._loglik_offline(xfiles)
         else:
             n_processes = min(len(xfiles), n_processes)
             chunk_size = int((len(xfiles) + n_processes - 1) / n_processes)
             print(f"Using MP. Chunk size: {chunk_size} files")
             xchunks = [xfiles[i:i + chunk_size] for i in
                     range(0, len(xfiles), chunk_size)]
-            caller_args = [(xchunk, self.log_mu_mix.copy(), self.log_mix_weights.copy(),
+            caller_args = [(xchunk, self.log_mu_mix.copy(), self.mix_weights.copy(),
                                 n_threads) for xchunk in xchunks]
             with Pool(n_processes) as mp_pool:
                 mp_res = list(mp_pool.starmap(multimix_loglik_offline, caller_args))
             loglik = np.sum(mp_res)
 
         return 2 * self._get_nparams() - 2 * loglik
+
+
+
+    def generate_samples(self, nsamples, random_state = 123):
+        """Samples from the distribution to generate new sequences.
+
+        Args:
+            nsamples (int): The number of samples to generate.
+            random_state (int): The random seed.
+
+        Returns:
+            preds (np.ndarray): An array of shape (nsamples,
+                self.sequence_length) where each element is a uint8
+                ranging from 0 to self.num_possible_items - 1.
+
+        Raises:
+            ValueError: Raised if model not fitted yet.
+        """
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        rng = np.random.default_rng(random_state)
+        sample_mat = np.zeros((nsamples, self.sequence_length), dtype = np.uint8)
+        for i in range(nsamples):
+            cnum = rng.multinomial(1, pvals = self.mix_weights).argmax()
+            for j in range(self.sequence_length):
+                sample_mat[i,j] = rng.multinomial(1, pvals=self.mu_mix[cnum,j,:]).argmax()
+        return sample_mat
+
+
+    def predict(self, xdata, n_threads = 1):
+        """Determine the most probable cluster for each datapoint
+        in a numpy array. Note that you should also check the
+        overall probability of each datapoint. If a datapoint is
+        very different from your training set, it will have
+        very low overall probability, but this function will
+        still assign it to the most likely cluster -- whichever
+        that is -- by default.
+
+        Args:
+            xdata (np.ndarray): A numpy array of type np.uint8, shape 2.
+            n_threads (int): The number of threads to use.
+
+        Returns:
+            preds (np.ndarray): An array of shape (xdata.shape[0])
+                containing a number from 0 to self.n_components - 1
+                indicating the predicted cluster for each datapoint.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        return multimix_predict(xdata, self.log_mu_mix,
+                self.mix_weights, n_threads)
+
+
+
+    def predict_proba(self, xdata, n_threads = 1, use_mixweights = True):
+        """Predict the probability of each datapoint in the input
+            array for each cluster.
+
+        Args:
+            xdata (np.ndarray): A numpy array of type np.uint8, shape 2.
+            n_threads (int): The number of threads to use.
+            use_mixweights (bool): If True, take mixture weights into
+                account; otherwise, generate p(x | cluster = a) ignoring
+                mixture weights.
+
+        Returns:
+            probs (np.ndarray): An array of shape (xdata.shape[0], n_components)
+                with the calculated probs for each datapoint for each cluster.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        return multimix_cluster_probs(xdata, self.log_mu_mix,
+                self.mix_weights, n_threads, use_mixweights)
+
+
+    def terminal_masked_predict_proba(self, xdata, start_col = 0,
+            end_col = 1, n_threads = 1, use_mixweights = True):
+        """Predict the probability of each datapoint in the input
+            array for each cluster, but with a "mask" such that amino acids
+            at the c-terminal or n-terminal are masked out and ignored.
+            This is useful primarily when there is a large n- or c-terminal
+            deletion and we would like to assess the humanness of the remaining
+            sequence ignoring this region.
+
+        Args:
+            xdata (np.ndarray): A numpy array of type np.uint8, shape 2.
+            start_col (int): The first column of the input to use;
+                previous columns are masked.
+            end_col (int): The last column of the input to use;
+                remaining columns are masked.
+            n_threads (int): The number of threads to use.
+            use_mixweights (bool): If True, take mixture weights into
+                account; otherwise, generate p(x | cluster = a) ignoring
+                mixture weights.
+
+        Returns:
+            probs (np.ndarray): An array of shape (xdata.shape[0], n_components)
+                with the calculated probs for each datapoint for each cluster.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        if start_col < 0 or start_col >= end_col or end_col > self.mu_mix.shape[1]:
+            raise ValueError("Inappropriate col start / col end passed.")
+        return multimix_cluster_probs_terminal_masked(xdata, self.log_mu_mix,
+                self.mix_weights, start_col, end_col, n_threads, use_mixweights)
+
+
+
+    def hard_assignment_mp(self, xfiles, n_processes = 1):
+        """Hard-assign each sequence to a single cluster, and compile
+        statistics on the distribution of amino acids for sequences
+        assigned to each cluster. Not currently set up to use
+        multithreading but can use multiprocessing. Currently
+        accepts only a list of .npy files as input.
+
+        Args:
+            xdata (list): A list of file paths to .npy files.
+            n_processes (int): The number of processes. If > 1,
+                multiprocessing is used. This will increase
+                memory consumption since n_processes copies must
+                be made of the model parameters.
+
+        Returns:
+            cluster_stats (np.ndarray): An array of size (self.n_components,
+                self.sequence_length, self.num_possible_items) where each
+                element is the number of matching observations in the
+                input data. Type uint32.
+
+        Raises:
+            ValueError: An error is raised if unexpected inputs are supplied.
+        """
+        self._check_input_files(xfiles)
+
+        n_proc = min(len(xfiles), n_processes)
+        chunk_size = int((len(xfiles) + n_proc - 1) / n_proc)
+        print(f"Using MP. Chunk size: {chunk_size} files")
+        xchunks = [xfiles[i:i + chunk_size] for i in
+                range(0, len(xfiles), chunk_size)]
+
+        cluster_stats = np.zeros_like((self.mu_mix), dtype = np.uint32)
+
+        caller_args = [(xchunk, self.log_mu_mix.copy(), self.mix_weights.copy())
+                for xchunk in xchunks]
+        with Pool(n_proc) as mp_pool:
+            mp_res = list(mp_pool.starmap(hard_cluster_assign,
+                                caller_args))
+
+        for res in mp_res:
+            cluster_stats += res
+
+        return cluster_stats
+
+
+    def _loglik_offline(self, xfiles, n_threads = 1):
+        """Generate the log-likelihood of the whole dataset
+        for a list of files as input.
+
+        Args:
+            xdata (list): A list of file paths to .npy files.
+            n_threads (int): the number of threads to use.
+
+        Returns:
+            loglik (float): The log-likelihood of the whole
+                input dataset.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_files(xfiles)
+        if self.mu_mix is None:
+            raise ValueError("Model not fitted yet.")
+        return multimix_loglik_offline(xfiles, self.log_mu_mix,
+                self.mix_weights, n_threads)
+
+
+    def score(self, xdata, n_threads = 1):
+        """Generate the overall log-likelihood of individual datapoints.
+        This is very useful to determine if a new datapoint is very
+        different from the training set. If the log-likelihood of
+        the new datapoints is much lower than the training set
+        distribution of log-likelihoods, it is fairly unlikely
+        that the new datapoint is a sample from the distribution
+        represented by the model, and you should not try to
+        assign it to a cluster.
+
+        Args:
+            xdata (np.ndarray): An array with the input data,
+                of type np.uint8.
+            n_threads (int): the number of threads to use.
+
+        Returns:
+            loglik (np.ndarray): A float64 array of shape (x.shape[0])
+                where each element is the log-likelihood of that
+                datapoint given the model.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        return multimix_score(xdata, self.log_mu_mix, self.mix_weights, n_threads)
+
+
+    def terminal_masked_score(self, xdata, start_col = 0, end_col = 1, n_threads = 1):
+        """Generate the overall log-likelihood of individual datapoints,
+        but with a "mask" such that amino acids at the c-terminal or
+        n-terminal are masked out and ignored. This is useful primarily
+        when there is a large n- or c-terminal deletion and we would
+        like to assess the humanness of the remaining sequence ignoring this
+        region.
+
+        Args:
+            xdata (np.ndarray): An array with the input data,
+                of type np.uint8.
+            n_threads (int): the number of threads to use.
+            start_col (int): The first column of the input to use;
+                previous columns are masked.
+            end_col (int): The last column of the input to use;
+                remaining columns are masked.
+
+        Returns:
+            loglik (np.ndarray): A float64 array of shape (x.shape[0])
+                where each element is the log-likelihood of that
+                datapoint given the model.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        if start_col < 0 or start_col >= end_col or end_col > self.mu_mix.shape[1]:
+            raise ValueError("Inappropriate col start / col end passed.")
+        return multimix_score_terminal_masked(xdata, self.log_mu_mix, self.mix_weights,
+                start_col, end_col, n_threads)
+
+
+    def gapped_score(self, xdata, n_threads = 1):
+        """Generate the overall log-likelihood of individual datapoints,
+        but ignoring gaps (cases where xdata==20). This is useful primarily
+        when dealing with light chains that have large unusual deletions.
+
+        Args:
+            xdata (np.ndarray): An array with the input data,
+                of type np.uint8.
+            n_threads (int): the number of threads to use.
+
+        Returns:
+            loglik (np.ndarray): A float64 array of shape (x.shape[0])
+                where each element is the log-likelihood of that
+                datapoint given the model.
+
+        Raises:
+            ValueError: Raised if unexpected inputs are supplied.
+        """
+        self._check_input_array(xdata)
+        if self.mu_mix is None or self.mix_weights is None:
+            raise ValueError("Model not fitted yet.")
+        return multimix_score_gapped(xdata, self.log_mu_mix, self.mix_weights,
+                n_threads)

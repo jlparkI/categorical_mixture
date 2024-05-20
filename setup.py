@@ -1,61 +1,77 @@
-"""Setup for the """
+"""The package setup file for categorical_mix."""
 import os
-from setuptools import setup, find_packages
-import numpy
-from Cython.Distutils import build_ext
-#Irrespective of what your linter says, do not
-#move this import above setuptools; this import
-#monkey patches setuptools, and -- remarkably --
-#reversing the order will lead to an error.
-from distutils.extension import Extension
+import sys
+from setuptools import setup, find_namespace_packages
+import pybind11
+from pybind11.setup_helpers import Pybind11Extension, build_ext
+
+if sys.version_info[:2] < (3, 7):
+    raise RuntimeError("Python version >= 3.7 required.")
 
 
-def get_version(start_fpath):
+
+def get_version(setup_fpath):
     """Retrieves the version number."""
-    os.chdir(os.path.join(start_fpath, "categorical_mixture"))
-    with open("__init__.py", "r") as fhandle:
+
+    os.chdir(os.path.join(setup_fpath, "categorical_mix"))
+    with open("__init__.py", "r", encoding="utf-8") as fhandle:
         version_line = [l for l in fhandle.readlines() if
-                l.startswith("__version__")]
+                    l.startswith("__version__")]
         version = version_line[0].split("=")[1].strip().replace('"', "")
-    os.chdir(start_fpath)
+    os.chdir(setup_fpath)
     return version
 
 
 
-setup_fpath = os.path.join(os.path.dirname(os.path.abspath(__file__)))
-readme_path = os.path.join(setup_fpath, "README.md")
+def main():
+    """Builds the package and extension."""
+    home_dir = os.path.dirname(os.path.abspath(__file__))
+    read_me = os.path.join(home_dir, "README.md")
+    with open(read_me, "r", encoding="utf-8") as fhandle:
+        long_description = "".join(fhandle.readlines())
 
-with open(readme_path, "r") as fhandle:
-    long_description = "".join(fhandle.readlines())
+    cpp_extra_link_args = []
+    cpp_extra_compile_args = [
+        "-std=c++11"
+    ]
 
-extension_path = os.path.join(setup_fpath, "categorical_mixture",
-        "core_cpu_funcs")
-cpu_wrappers = Extension("core_cpu_func_wrappers",
-        sources = [os.path.join(extension_path, "core_cpu_func_wrappers.pyx"),
-            os.path.join(extension_path, "responsibility_calcs.cpp"),
-            os.path.join(extension_path, "weighted_counts.cpp")],
-        language="c++",
-        include_dirs=[numpy.get_include(), extension_path],
-        extra_compile_args=["-O3"])
+    extensions=[
+        Pybind11Extension("categorical_mix_cpp_ext",
+            sources=[
+                "categorical_mix/ext/catmix_cpp_ext.cpp"
+                "categorical_mix/ext/responsibility_calcs.cpp"
+                "categorical_mix/ext/catmix_utilities.cpp"
+                "categorical_mix/ext/weight_updates.cpp"
+            ],
+            include_dirs=[
+                "categorical_mix/ext",
+                pybind11.get_include(),
+            ],
+            language="c++",
+            extra_compile_args=cpp_extra_compile_args  + ["-fvisibility=hidden"], # needed by pybind
+            extra_link_args=cpp_extra_link_args,
+        )
+    ]
 
-cpu_wrappers.cython_directives = {"language_level":"3"}
-
-setup(
+    setup(
         name="categorical_mix",
-        version=get_version(setup_fpath),
-        packages=find_packages(),
-        cmdclass = {"build_ext": build_ext},
-        author="Jonathan Parkinson",
-        author_email="jlparkinson1@gmail.com",
-        description = "Fitting a mixture of categoricals model to sequence data",
-        long_description = long_description,
-        long_description_content_type = "text/markdown",
-        install_requires = ["numpy>=1.10", "scipy>=1.7.0",
-            "cython>=0.10"],
-        ext_modules = [cpu_wrappers],
-        package_data={"": ["*.h", "*.c", "*.cpp",
-            "*.pyx", "*.sh"]}
+        version=get_version(home_dir),
+        description="A package for fitting simple categorical mixture models to sequence data",
+        long_description=long_description,
+        long_description_content_type='text/markdown',
+        packages=find_namespace_packages(),
+        cmdclass={"build_ext":build_ext},
+        setup_requires=['pybind11>=2.4'],
+        install_requires=['pybind11>=2.4', "numpy"],
+        include_package_data=True,
+        ext_modules=extensions,
+        python_requires=">=3.7",
+        package_data={"": ["*.h", "*.c", "*.cpp"]}
     )
 
-os.chdir(extension_path)
-os.remove("core_cpu_func_wrappers.cpp")
+
+
+
+
+if __name__ == "__main__":
+    main()
