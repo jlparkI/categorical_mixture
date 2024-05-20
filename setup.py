@@ -38,10 +38,10 @@ def main():
     extensions=[
         Pybind11Extension("categorical_mix_cpp_ext",
             sources=[
-                "categorical_mix/ext/catmix_cpp_ext.cpp"
-                "categorical_mix/ext/responsibility_calcs.cpp"
-                "categorical_mix/ext/catmix_utilities.cpp"
-                "categorical_mix/ext/weight_updates.cpp"
+                "categorical_mix/ext/catmix_cpp_ext.cpp",
+                "categorical_mix/ext/responsibility_calcs.cpp",
+                "categorical_mix/ext/catmix_utilities.cpp",
+                "categorical_mix/ext/weight_updates.cpp",
             ],
             include_dirs=[
                 "categorical_mix/ext",

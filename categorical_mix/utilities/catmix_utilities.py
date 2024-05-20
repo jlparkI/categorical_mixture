@@ -56,7 +56,7 @@ def em_offline(xfiles, mixweights, mu, n_threads):
         rsum = resp.sum(axis=1)
         new_weights += rsum
         net_resp += rsum.sum()
-        _ = getWeightedCountCExt(x, rik_counts, resp, n_threads)
+        getWeightedCountCExt(x, rik_counts, resp, n_threads)
     return new_weights, lb, rik_counts, net_resp, ndpoints
 
 
@@ -109,7 +109,7 @@ def em_online(x, mixweights, mu, n_threads):
     new_weights += rsum
     net_resp += rsum.sum()
 
-    _ = getWeightedCountCExt(x, rik_counts, resp, n_threads)
+    getWeightedCountCExt(x, rik_counts, resp, n_threads)
     return new_weights, lb, rik_counts, net_resp, ndpoints
 
 

@@ -10,7 +10,7 @@
 #include <vector>
 #include <thread>
 #include <iostream>
-//#include "responsibility_calcs.h"
+#include "responsibility_calcs.h"
 
 
 #define NO_ERROR 0
@@ -54,10 +54,10 @@ void getProbsCExt(py::array_t<uint8_t, py::array::c_style> x,
     // array inputs are unacceptable, raise an exception that
     // (since this function is python-wrapped) will be handled by
     // the wrapper.
-    int errcode = respSafetyChecks(x, mu, resp);
+    int errcode = respSafetyChecks(x, mu, resp, n_threads);
     if (errcode != NO_ERROR){
         throw std::runtime_error(std::string("Incompatible array shapes / data types "
-                    "passed to a responsibility calculation function in the cpp ext."))
+                    "passed to a responsibility calculation function in the cpp ext."));
     }
 
     if (n_threads > mu.shape(0))
@@ -231,10 +231,10 @@ void getProbsCExt_masked(py::array_t<uint8_t, py::array::c_style> x,
     // array inputs are unacceptable, raise an exception that
     // (since this function is python-wrapped) will be handled by
     // the wrapper.
-    int errcode = respSafetyChecks(x, mu, resp);
+    int errcode = respSafetyChecks(x, mu, resp, n_threads);
     if (errcode != NO_ERROR){
         throw std::runtime_error(std::string("Incompatible array shapes / data types "
-                    "passed to a responsibility calculation function in the cpp ext."))
+                    "passed to a responsibility calculation function in the cpp ext."));
     }
 
     if (n_threads > x.shape(0))
@@ -362,8 +362,7 @@ int respSafetyChecks(py::array_t<uint8_t, py::array::c_style> x,
         py::array_t<double, py::array::c_style> mu,
         py::array_t<double, py::array::c_style> resp,
         int n_threads){
-    if (mu.shape.size() != 3 || x.shape.size() != 2 ||
-            resp.shape.size() != 2)
+    if (mu.ndim() != 3 || x.ndim() != 2 || resp.ndim() != 2)
         return ARRAY_SIZING_ERROR;
 
     if (x.shape(0) != resp.shape(1))

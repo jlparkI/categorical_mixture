@@ -8,65 +8,9 @@
 #define INVALID_SEQUENCE 0
 
 
-//Checks a query sequence to ensure it contains only recognized
-//amino acids. This function is directly available to Python
-// callers through the wrapper.
-int validate_sequence(std::string query_sequence){
-    bool validQuery = true;
-
-    if (query_sequence.length() == 0){
-        return INVALID_SEQUENCE;
-    }
-
-    for (char & c : query_sequence)
-    {
-        //Switch will provide a (small) speed gain over map
-        //since compiler should convert it to a lookup table
-        switch (c){
-            case 'A':
-            case 'C':
-            case 'D':
-            case 'E':
-            case 'F':
-            case 'G':
-            case 'H':
-            case 'I':
-            case 'K':
-            case 'L':
-            case 'M':
-            case 'N':
-            case 'P':
-            case 'Q':
-            case 'R':
-            case 'S':
-            case 'T':
-            case 'V':
-            case 'W':
-            case 'Y':
-                break;
-            
-            default:
-                validQuery = false;
-                break;
-
-        }
-        if (!validQuery){
-            break;
-        }
-    }
-    if (!validQuery){
-        return INVALID_SEQUENCE;
-    }
-    return VALID_SEQUENCE;
-}
-
-
 // Converts an input sequence to a numeric representation as an
-// array of integers. This function does not do any safety checks
-// on the input so it should never be accessed by Python functions --
-// only ever by C++ functions that DO perform safety checks on
-// input. In particular, caller MUST verify that seqAsArray is
-// the same length as sequence.
+// array of integers. TODO: Do not use this function in its current
+// form, it needs to be updated to use a py::array as input.
 int convert_sequence_to_array(int *queryAsIdx, std::string query_sequence){
     
     // Translate the query sequence into an integer 0-21 encoding. This

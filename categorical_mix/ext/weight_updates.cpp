@@ -38,7 +38,7 @@
  *
  * All operations are in place, nothing is returned.
  */
-int getWeightedCountCExt(py::array_t<uint8_t, py::array::c_style> x,
+void getWeightedCountCExt(py::array_t<uint8_t, py::array::c_style> x,
         py::array_t<double, py::array::c_style> wcount,
         py::array_t<double, py::array::c_style> resp,
         int n_threads){
@@ -46,10 +46,10 @@ int getWeightedCountCExt(py::array_t<uint8_t, py::array::c_style> x,
     // array inputs are unacceptable, raise an exception that
     // (since this function is python-wrapped) will be handled by
     // the wrapper.
-    int errcode = wcountSafetyChecks(x, mu, resp);
+    int errcode = wcountSafetyChecks(x, wcount, resp, n_threads);
     if (errcode != NO_ERROR){
         throw std::runtime_error(std::string("Incompatible array shapes / data types "
-                    "passed to a weight update function in the cpp ext."))
+                    "passed to a weight update function in the cpp ext."));
     }
 
     int wcount_dim0 = wcount.shape(0), wcount_dim1 = wcount.shape(1), wcount_dim2 = wcount.shape(2);
@@ -61,8 +61,8 @@ int getWeightedCountCExt(py::array_t<uint8_t, py::array::c_style> x,
     int chunkSize = (wcount_dim0 + n_threads - 1) / n_threads;
     std::vector<std::thread> threads(n_threads);
 
-    if (n_threads > x_dim0)
-        n_threads = x_dim0;
+    if (n_threads > ndatapoints)
+        n_threads = ndatapoints;
 
     for (int i=0; i < n_threads; i++){
         startRow = i * chunkSize;
@@ -76,8 +76,6 @@ int getWeightedCountCExt(py::array_t<uint8_t, py::array::c_style> x,
 
     for (auto& th : threads)
         th.join();
-    // For now no more extensive error handling in this function.
-    return NO_ERROR;
 }
 
 
@@ -165,8 +163,7 @@ int wcountSafetyChecks(py::array_t<uint8_t, py::array::c_style> x,
         py::array_t<double, py::array::c_style> wcount,
         py::array_t<double, py::array::c_style> resp,
         int n_threads){
-    if (wcount.shape.size() != 3 || x.shape.size() != 2 ||
-            resp.shape.size() != 2)
+    if (wcount.ndim() != 3 || x.ndim() != 2 || resp.ndim() != 2)
         return ARRAY_SIZING_ERROR;
 
     if (x.shape(0) != resp.shape(1))
