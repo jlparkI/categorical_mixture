@@ -156,11 +156,11 @@ void *getProbsCExt_worker(uint8_t *x, double *resp,
  * # mask_terminal_deletions
  *
  * Converts all gaps at the N- and C-terminal ends of each sequence
- * into value 21. This can then be passed to a masked scoring
+ * into value 255. This can then be passed to a masked scoring
  * function. The operation is performed in place. Once this
  * conversion has been performed, the result should not under
  * any circumstances be passed to a non-masked scoring function
- * (the non-masked scoring function does not use value 21).
+ * since this may lead to erroneous scoring.
  *
  * ## Args
  *
@@ -180,12 +180,12 @@ void mask_terminal_deletions(py::array_t<uint8_t, py::array::c_style> x){
         for (int k=0; k < nCols; k++){
             if (xref[k] != 20)
                 break;
-            xref[k] = 21;
+            xref[k] = 255;
         }
         for (int k=nCols - 1; k > 0; k--){
             if (xref[k] != 20)
                 break;
-            xref[k] = 21;
+            xref[k] = 255;
         }
         xref += nCols;
     }
@@ -200,7 +200,7 @@ void mask_terminal_deletions(py::array_t<uint8_t, py::array::c_style> x){
  *
  * Calculates the updated responsibilities (the E-step
  * in the EM algorithm) for a batch of input data,
- * but ignoring masked positions (cases where x[i] > 20).
+ * but ignoring masked positions (cases where x[i] = 255).
  * This function does not do any bounds checking, so it
  * is important for caller to do so. This function
  * is multithreaded and divides the work up into groups
@@ -315,7 +315,7 @@ void *getProbsCExt_masked_worker(uint8_t *x, double *resp,
             mu_marker = mu + mu_row;
 
             for (j=0; j < seqLen; j++){
-                if (*x_current > 20){
+                if (*x_current == 255){
                     x_current++;
                     mu_marker += muDim2;
                     continue;

@@ -45,9 +45,6 @@ def em_offline(xfiles, mixweights, mu, n_threads):
         resp = np.zeros((log_mu.shape[0], x.shape[0]))
         lnorm = np.zeros((x.shape[0]))
 
-        import pdb
-        pdb.set_trace()
-
         getProbsCExt(x, log_mu, resp, n_threads)
         resp += log_mixweights[:,None]
         lnorm[:] = logsumexp(resp, axis=0)

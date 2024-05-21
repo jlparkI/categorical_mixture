@@ -49,25 +49,23 @@ class CategoricalMixture:
             num_possible_items (int): The number of possible choices
                 at each position in the sequence. For a protein sequence,
                 for example, this might be the number of amino acid symbols
-                that are possible; for a sequence of letters, this might
-                be the number of letters in the alphabet; for shopping
-                data, this might be the number of unique items the customer
-                might purchase. Currently limited to the range from 1 - 255,
-                this restriction will be lifted in a future version.
+                that are possible; Currently limited to the range from 1 - 254.
             sequence_length (int): The length of the sequences that the
                 model will be fitted to / can analyze.
 
         Raises:
-            ValueError: A ValueError is raised if unacceptable arguments are
+            RuntimeError: A RuntimeError is raised if unacceptable arguments are
                 supplied.
         """
         if n_components <= 0:
-            raise ValueError("n_components must be > 0.")
-        if num_possible_items > 255 or num_possible_items <= 0:
-            raise ValueError("Currently num_possible_items is limited to "
-                    "values from 1 to 255, inclusive.")
+            raise RuntimeError("n_components must be > 0.")
+        #This class reserves 255 for internal use, so num_possible_items must
+        #be < 255 (because input is expected to be uint8).
+        if num_possible_items >= 255 or num_possible_items <= 0:
+            raise RuntimeError("Currently num_possible_items is limited to "
+                    "values from 1 to 254, inclusive.")
         if sequence_length <= 0:
-            raise ValueError("Sequence length must be positive.")
+            raise RuntimeError("Sequence length must be positive.")
 
         self.mix_weights = None
         self.log_mix_weights = None
@@ -90,20 +88,20 @@ class CategoricalMixture:
                 The weight for each distribution in the mixture.
 
         Raises:
-            ValueError: A ValueError is raised if the inputs are inappropriate.
+            RuntimeError: A RuntimeError is raised if the inputs are inappropriate.
         """
         if not isinstance(mu_mix, np.ndarray) or not isinstance(mix_weights, np.ndarray):
-            raise ValueError("mu_mix and mix_weights should both be numpy arrays.")
+            raise RuntimeError("mu_mix and mix_weights should both be numpy arrays.")
         if len(mu_mix.shape) != 3 or len(mix_weights.shape) != 1:
-            raise ValueError("mu_mix and mix_weights must be 3d and 1d arrays respectively.")
+            raise RuntimeError("mu_mix and mix_weights must be 3d and 1d arrays respectively.")
         if mu_mix.shape[0] != self.n_components or mu_mix.shape[1] != self.sequence_length \
                 or mu_mix.shape[2] != self.num_possible_items:
-            raise ValueError("mu_mix has an inappropriate shape.")
+            raise RuntimeError("mu_mix has an inappropriate shape.")
         if mix_weights.shape[0] != self.n_components:
-            raise ValueError("mix_weights has an inappropriate shape.")
+            raise RuntimeError("mix_weights has an inappropriate shape.")
 
         if not mu_mix.flags["C_CONTIGUOUS"] or not mix_weights.flags["C_CONTIGUOUS"]:
-            raise ValueError("Non-C-contiguous arrays supplied.")
+            raise RuntimeError("Non-C-contiguous arrays supplied.")
 
         self.mix_weights = mix_weights
         self.log_mix_weights = mix_weights.copy()
@@ -128,29 +126,29 @@ class CategoricalMixture:
             n_threads (int): The number of threads requested.
 
         Raises:
-            ValueError: A ValueError is raised if unacceptable
+            RuntimeError: A RuntimeError is raised if unacceptable
                 input data is supplied.
         """
         if not isinstance(xdata, np.ndarray):
-            raise ValueError("Unexpected input supplied.")
+            raise RuntimeError("Unexpected input supplied.")
         if np.max(xdata) >= self.num_possible_items or np.min(xdata) < 0:
-            raise ValueError("Values in input data are out of range.")
+            raise RuntimeError("Values in input data are out of range.")
         if xdata.dtype != "uint8":
-            raise ValueError("Unexpected datatype for input data.")
+            raise RuntimeError("Unexpected datatype for input data.")
         if len(xdata.shape) != 2:
-            raise ValueError("Unexpected shape for input data.")
+            raise RuntimeError("Unexpected shape for input data.")
         if xdata.shape[1] != self.sequence_length or xdata.shape[0] < 1:
-            raise ValueError("Unexpected shape for input data.")
+            raise RuntimeError("Unexpected shape for input data.")
         if not xdata.flags["C_CONTIGUOUS"]:
-            raise ValueError("Input data is not C-contiguous.")
+            raise RuntimeError("Input data is not C-contiguous.")
 
         if n_threads <= 0:
-            raise ValueError("n_threads should be a positive integer.")
+            raise RuntimeError("n_threads should be a positive integer.")
         if not isinstance(n_threads, int):
-            raise ValueError("n_threads should be a positive integer.")
+            raise RuntimeError("n_threads should be a positive integer.")
 
 
-    def prep_masked_array(self, xdata, mask = None, mask_terminal_dels = False,
+    def _prep_masked_array(self, xdata, mask = None, mask_terminal_dels = False,
             mask_gaps = False):
         """Prepares a masked version of an input array if any masking options are
         supplied.
@@ -161,7 +159,7 @@ class CategoricalMixture:
                 and shape (xdata.shape[1]). If not None, indicated
                 positions are masked, i.e. are not taken into account
                 when calculating the score.
-            mask_gaps (bool): If True, all non-filled IMGT positions in the sequence
+            mask_gaps (bool): If True, all gaps in the sequence
                 are ignored when calculating the score. This is useful when your
                 sequence has unusual deletions and you would like to ignore these.
             mask_terminal_dels (bool): If True, ignore N- and C-terminal
@@ -171,27 +169,31 @@ class CategoricalMixture:
             xmasked (np.ndarray): A 2d numpy array of type np.uint8.
 
         Raises:
-            ValueError: A ValueError is raised if bad inputs are supplied.
+            RuntimeError: A RuntimeError is raised if bad inputs are supplied.
         """
+        #This option is only available if the number of possible items is < 255.
+        if self.num_possible_items >= 255:
+            raise RuntimeError("Currently masking is only available if the num_possible_items "
+                    "setting is < 255.")
+
         xmasked = xdata.copy()
 
         if mask is not None:
             if not isinstance(mask, np.ndarray):
-                raise ValueError("Mask must be a numpy array.")
+                raise RuntimeError("Mask must be a numpy array.")
             if mask.shape[0] != xdata.shape[1]:
-                raise ValueError("Mask shape must be consistent with xdata shape.")
+                raise RuntimeError("Mask shape must be consistent with xdata shape.")
             if len(mask.shape) != 1:
-                raise ValueError("Mask must be a 1d array.")
+                raise RuntimeError("Mask must be a 1d array.")
 
-            #There is no amino acid 21, so we use this as a convenient "please ignore"
-            #indicator.
-            xmasked[:,~mask] = 21
+            #We use 255 as a convenient "please ignore" indicator.
+            xmasked[:,~mask] = 255
 
         if mask_terminal_dels:
             mask_terminal_deletions(xmasked)
 
         if mask_gaps:
-            xmasked[xmasked==20] = 21
+            xmasked[xmasked==20] = 255
 
         return xmasked
 
@@ -235,16 +237,16 @@ class CategoricalMixture:
                 the probability of each cluster for each datapoint.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         self._check_input_array(xdata, n_threads)
         if self.log_mu_mix is None or self.log_mix_weights is None:
-            raise ValueError("Model not fitted yet.")
+            raise RuntimeError("Model not fitted yet.")
 
         resp = np.zeros((self.log_mu_mix.shape[0], xdata.shape[0]))
 
         if mask is not None or mask_terminal_dels or mask_gaps:
-            xmasked = self.prep_masked_array(xdata, mask, mask_terminal_dels, mask_gaps)
+            xmasked = self._prep_masked_array(xdata, mask, mask_terminal_dels, mask_gaps)
             getProbsCExt_masked(xmasked, self.log_mu_mix, resp, n_threads)
 
         else:
@@ -279,7 +281,7 @@ class CategoricalMixture:
                 when calculating the score.
             mask_terminal_dels (bool): If True, ignore N- and C-terminal
                 deletions when calculating a score.
-            mask_gaps (bool): If True, all non-filled IMGT positions in the sequence
+            mask_gaps (bool): If True, all gaps in the sequence
                 are ignored when calculating the score. This is useful when your
                 sequence has unusual deletions and you would like to ignore these.
             normalize_scores (bool): If True, normalize the score by dividing by
@@ -292,20 +294,20 @@ class CategoricalMixture:
                 datapoint given the model.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         self._check_input_array(xdata, n_threads)
         if self.mu_mix is None or self.mix_weights is None:
-            raise ValueError("Model not fitted yet.")
+            raise RuntimeError("Model not fitted yet.")
 
         resp = np.zeros((self.log_mu_mix.shape[0], xdata.shape[0]))
         if mask is not None or mask_terminal_dels or mask_gaps:
-            xmasked = self.prep_masked_array(xdata, mask, mask_terminal_dels, mask_gaps)
+            xmasked = self._prep_masked_array(xdata, mask, mask_terminal_dels, mask_gaps)
             getProbsCExt_masked(xmasked, self.log_mu_mix, resp, n_threads)
             resp += self.log_mix_weights[:,None]
             resp = logsumexp(resp, axis=0)
             if normalize_scores:
-                resp /= (xmasked < 21).sum(axis=1)
+                resp /= (xmasked < 255).sum(axis=1)
 
         else:
             getProbsCExt(xdata, self.log_mu_mix, resp, n_threads)
@@ -332,23 +334,23 @@ class CategoricalMixture:
             xfiles (list): A list of file paths to numpy arrays saved
                 on disk as .npy files.
         Raises:
-            ValueError: A ValueError is raised if one or more files has
+            RuntimeError: A RuntimeError is raised if one or more files has
                 unacceptable issues.
         """
         if not isinstance(xlist, list):
-            raise ValueError("Unexpected input supplied.")
+            raise RuntimeError("Unexpected input supplied.")
         for xfile in xlist:
             x_in = np.load(xfile)
             if np.max(x_in) > self.num_possible_items or np.min(x_in) < 0:
-                raise ValueError(f"Values in {xfile} are out of range.")
+                raise RuntimeError(f"Values in {xfile} are out of range.")
             if x_in.dtype != "uint8":
-                raise ValueError(f"Unexpected datatype for {xfile}.")
+                raise RuntimeError(f"Unexpected datatype for {xfile}.")
             if len(x_in.shape) != 2:
-                raise ValueError(f"Unexpected shape for {xfile}.")
+                raise RuntimeError(f"Unexpected shape for {xfile}.")
             if x_in.shape[1] != self.sequence_length or x_in.shape[0] < 1:
-                raise ValueError(f"Unexpected shape for {xfile}.")
+                raise RuntimeError(f"Unexpected shape for {xfile}.")
             if not x_in.flags["C_CONTIGUOUS"]:
-                raise ValueError("Input data is not C-contiguous.")
+                raise RuntimeError("Input data is not C-contiguous.")
 
 
     def _get_init_params(self, random_state):
@@ -406,7 +408,7 @@ class CategoricalMixture:
                 n_processes.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         if isinstance(xdata, np.ndarray):
             self._check_input_array(xdata, n_threads)
@@ -418,7 +420,7 @@ class CategoricalMixture:
             else:
                 iter_runner = self._single_iter_mp
         else:
-            raise ValueError("xdata must be either a list or a numpy array.")
+            raise RuntimeError("xdata must be either a list or a numpy array.")
 
 
         best_loss = -np.inf
@@ -431,7 +433,7 @@ class CategoricalMixture:
                 best_loss = copy.deepcopy(loss)
 
         if self.mu_mix is None:
-            raise ValueError("No restarts converged!")
+            raise RuntimeError("No restarts converged!")
 
 
     def _single_iter_online(self, xdata, tol,
@@ -455,7 +457,7 @@ class CategoricalMixture:
             n_threads (int): The number of threads to use on each array.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         loss = -np.inf
         mix_weights, mu_mix = self._get_init_params(random_state)
@@ -500,7 +502,7 @@ class CategoricalMixture:
             n_threads (int): The number of threads to use on each array.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         loss = -np.inf
         mix_weights, mu_mix = self._get_init_params(random_state)
@@ -544,7 +546,7 @@ class CategoricalMixture:
                 in each process.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         n_processes = min(len(xfiles), n_processes)
         chunk_size = int((len(xfiles) + n_processes - 1) / n_processes)
@@ -597,12 +599,12 @@ class CategoricalMixture:
             n_threads (int): The number of threads to use.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         self._check_input_array(xdata, n_threads)
 
         if self.mu_mix is None:
-            raise ValueError("Model not fitted yet.")
+            raise RuntimeError("Model not fitted yet.")
 
         ndatapoints = get_ndatapoints(xdata)
         loglik = multimix_loglik(xdata, self.log_mu_mix, self.mix_weights,
@@ -628,12 +630,12 @@ class CategoricalMixture:
                 memory consumption.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         self._check_input_files(xfiles)
 
         if self.mu_mix is None:
-            raise ValueError("Model not fitted yet.")
+            raise RuntimeError("Model not fitted yet.")
         ndatapoints = get_ndatapoints(xfiles)
 
         if len(xfiles) < 3 or n_processes == 1:
@@ -663,11 +665,11 @@ class CategoricalMixture:
             n_threads (int): the number of threads to use.
 
         Raises:
-            ValueError: raised if unexpected inputs are supplied.
+            RuntimeError: raised if unexpected inputs are supplied.
         """
         self._check_input_array(xdata, n_threads)
         if self.mu_mix is None:
-            raise ValueError("Model not fitted yet.")
+            raise RuntimeError("Model not fitted yet.")
         loglik = multimix_loglik(xdata, self.log_mu_mix, self.mix_weights.copy(),
                 n_threads).sum()
         return 2 * self._get_nparams() - 2 * loglik
@@ -688,11 +690,11 @@ class CategoricalMixture:
                 memory consumption.
 
         Raises:
-            ValueError: Raised if unexpected inputs are supplied.
+            RuntimeError: Raised if unexpected inputs are supplied.
         """
         self._check_input_files(xfiles)
         if self.mu_mix is None:
-            raise ValueError("Model not fitted yet.")
+            raise RuntimeError("Model not fitted yet.")
 
         if len(xfiles) < 3 or n_processes == 1:
             loglik = multimix_loglik_offline(xfiles, self.log_mu_mix,
