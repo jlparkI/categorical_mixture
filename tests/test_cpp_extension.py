@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 from categorical_mix.utilities.special_functions import logsumexp
 from core_cpu_func_wrappers import em_online, em_offline
-from categorical_mixture.categorical_mix import CategoricalMixture
+from categorical_mix import CategoricalMixture
 
 
 def get_current_dir():

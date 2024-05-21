@@ -2,7 +2,11 @@
 import os
 import random
 import numpy as np
-from .test_constants import AA_DICT
+
+AA_LIST = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M',
+        'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y', '-']
+
+AA_DICT = {s:i for (i, s) in enumerate(AA_LIST)}
 
 
 def encode_seq_data(start_dir):

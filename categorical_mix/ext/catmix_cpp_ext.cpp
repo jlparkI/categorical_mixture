@@ -14,8 +14,6 @@ namespace py = pybind11;
 using namespace std;
 
 PYBIND11_MODULE(antpack_cpp_ext, m){
-    m.def("validate_sequence", &validate_sequence);
-
     m.def("getProbsCExt", &getProbsCExt, py::call_guard<py::gil_scoped_release>());
     m.def("mask_terminal_deletions", &mask_terminal_deletions, py::call_guard<py::gil_scoped_release>());
     m.def("getProbsCExt_masked", &getProbsCExt_masked, py::call_guard<py::gil_scoped_release>());
