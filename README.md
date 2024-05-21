@@ -1,5 +1,5 @@
 # categorical_mix
-Fast, scalable clustering for up to 1 billion fixed length sequences with a simple generative model.
+Fast, scalable clustering for fixed length sequences with a simple generative model.
 
 This package is a fairly special-purpose tool designed for fitting multiple sequence alignments
 of protein or DNA sequences to a categorical mixture model. (It's possible you could use

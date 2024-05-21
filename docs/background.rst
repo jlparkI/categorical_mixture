@@ -1,4 +1,4 @@
-Background -- the categorical mixture model
+Background -- What this package does
 ============================================
 
 The categorical mixture is a simple generative
@@ -12,14 +12,16 @@ has several advantages:
 a dataset of over 900 million sequences (>150 billion tokens)
 using > 2000 clusters.
 3) It's a probability distribution over the sequence
-space, so it's both highly interpretable and easily
-used to generate new sequences.
+space, so it's both highly interpretable (easy to plot) and
+easily used to generate new sequences.
 
-So it's definitely not a general-purpose model that you can
-use to solve a wide range of problems. At the same time,
-however, there are certain kinds
-of problems where it's "just right" for what you're
-trying to do.
+So it's very special-purpose. It's definitely not a
+general-purpose model. At the same time, however, there
+are certain kinds of problems where it may be "just
+right" for what you're trying to do. This package is used
+heavily by `AntPack <https://github.com/jlparkI/AntPack>`_
+but is also free for independent use if you can find
+another use for it.
 
 If you encounter any errors, have questions or would like
 to see a new feature, please use the project github page:
