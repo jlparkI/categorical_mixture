@@ -4,7 +4,8 @@ import os
 import unittest
 import numpy as np
 from categorical_mix.utilities.special_functions import logsumexp
-from core_cpu_func_wrappers import em_online, em_offline
+from categorical_mix.utilities.catmix_utilities import em_online, em_offline
+from categorical_mix_cpp_ext import getProbsCExt, getProbsCExt_masked, mask_terminal_deletions
 from categorical_mix import CategoricalMixture
 
 
@@ -63,31 +64,39 @@ class TestBasicCPPCalcs(unittest.TestCase):
     def test_em_online(self):
         """Tests responsibility calculations conducted by the cpp
         extension for data in memory."""
+        current_dir = os.getcwd()
         start_dir = get_current_dir()
-        data_path = os.path.join(start_dir, "..", "test_data", "encoded_test_data.npy")
+        data_path = os.path.join(start_dir, "test_data", "encoded_test_data.npy")
         xdata = np.load(data_path)
 
         mix_weights, mu_init = get_initial_params()
         ground_truth = ground_truth_em_calcs(xdata, mix_weights, mu_init)
 
-        test_results = em_online(xdata, mix_weights, mu_init.copy(), 1)
+        test_results = em_online(xdata, mix_weights, mu_init, 1)
         for test_res, gt_res in zip(test_results, ground_truth):
             self.assertTrue(np.allclose(test_res, gt_res))
+
+        os.chdir(current_dir)
+
 
     def test_em_offline(self):
         """Tests responsibility calculations conducted by the cpp
         extension for data on disk."""
+        current_dir = os.getcwd()
         start_dir = get_current_dir()
-        data_path = os.path.join(start_dir, "..", "test_data", "encoded_test_data.npy")
+        data_path = os.path.join(start_dir, "test_data", "encoded_test_data.npy")
         xdata = np.load(data_path)
         xfiles = [os.path.abspath(data_path)]
 
         mix_weights, mu_init = get_initial_params()
         ground_truth = ground_truth_em_calcs(xdata, mix_weights, mu_init)
 
-        test_results = em_offline(xfiles, mix_weights, mu_init.copy(), 1)
+        test_results = em_offline(xfiles, mix_weights, mu_init, 1)
         for test_res, gt_res in zip(test_results, ground_truth):
             self.assertTrue(np.allclose(test_res, gt_res))
+
+        os.chdir(current_dir)
+
 
 
 if __name__ == "__main__":

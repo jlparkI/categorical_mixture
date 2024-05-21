@@ -45,8 +45,11 @@ def em_offline(xfiles, mixweights, mu, n_threads):
         resp = np.zeros((log_mu.shape[0], x.shape[0]))
         lnorm = np.zeros((x.shape[0]))
 
+        import pdb
+        pdb.set_trace()
+
         getProbsCExt(x, log_mu, resp, n_threads)
-        resp += log_mixweights
+        resp += log_mixweights[:,None]
         lnorm[:] = logsumexp(resp, axis=0)
         with np.errstate(under="ignore"):
             resp[:] = np.exp(resp - lnorm[None,:])
@@ -98,7 +101,7 @@ def em_online(x, mixweights, mu, n_threads):
     net_resp = 0
 
     getProbsCExt(x, log_mu, resp, n_threads)
-    resp += log_mixweights
+    resp += log_mixweights[:,None]
     lnorm[:] = logsumexp(resp, axis=0)
     with np.errstate(under="ignore"):
         resp[:] = np.exp(resp - lnorm[None,:])

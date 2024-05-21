@@ -371,7 +371,7 @@ int respSafetyChecks(py::array_t<uint8_t, py::array::c_style> x,
     if (resp.shape(0) != mu.shape(0))
         return ARRAY_SIZING_ERROR;
 
-    if (x.shape(1) != mu.shape(2))
+    if (x.shape(1) != mu.shape(1))
         return ARRAY_SIZING_ERROR;
 
     return NO_ERROR;
