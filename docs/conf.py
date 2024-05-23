@@ -17,12 +17,12 @@ sys.path.append("..")
 
 # -- Project information -----------------------------------------------------
 
-project = 'multinomial_mixture'
-copyright = '2023, University of California San Diego'
+project = 'categorical_mix'
+copyright = '2024, University of California San Diego'
 author = 'Jonathan Parkinson'
 
 # The full version, including alpha/beta/rc tags
-release = '0.0.1'
+release = '0.1.0'
 
 
 # -- General configuration ---------------------------------------------------
@@ -53,3 +53,5 @@ napoleon_custom_sections = [('Returns', 'params_style')]
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = []
+
+autodoc_mock_imports = ["categorical_mix_cpp_ext"]

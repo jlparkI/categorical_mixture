@@ -11,9 +11,7 @@ data.
 
   Installation <installation>
 
-  Fitting a model <fitting>
-  
-  Making and using predictions <preds>
+  Fitting a model, making and using predictions <fitting>
 
 
 Examples
@@ -25,15 +23,3 @@ Examples
   notebooks/protein_example
 
 
-
-Package Reference
---------------------
-
-.. toctree::
-  :maxdepth: 1
-   
-  CategoricalMixture<source/categorical_mixture>
-
-
-
-* :ref:`search`
