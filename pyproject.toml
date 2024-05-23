@@ -1,3 +1,20 @@
 [build-system]
 requires = ["setuptools", "wheel", "pybind11>=2.4", "numpy"]
 build-backend = "setuptools.build_meta"
+
+[project]
+dynamic = ["version"]
+name="categorical_mix"
+dependencies=["setuptools", "wheel", "pybind11>=2.4", "numpy"]
+requires-python=">=3.5"
+authors = [
+    {name = "Jonathan Parkinson", email = "jlparkinson1@gmail.com"},
+    ]
+readme="README.md"
+description="A package for fitting simple categorical mixture models to sequence data"
+license={file="LICENSE"}
+keywords = ["categorical mixture", "mixture model"]
+
+[project.urls]
+Homepage = "https://github.com/jlparki/categorical_mixture"
+respository = "https://github.com/jlparki/categorical_mixture"
