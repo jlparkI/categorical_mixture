@@ -31,7 +31,9 @@ jobs:
         pip install -r dev_requirements.txt
     - name: Install package
       run: |
-        python -m build
+        python -m build --sdist
+        cd dist
+        pip install *
     - name: Test with pytest
       run: |
         pytest tests
