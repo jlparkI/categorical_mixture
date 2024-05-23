@@ -10,4 +10,4 @@ designed to fit datasets too large to fit in memory.
 
 This package is primarily used by [AntPack](https://github.com/jlparkI/AntPack), which uses it to score
 antibody sequences for human-likeness and for other tasks. If you are interested in using it for
-some other task, for installation and usage, see [the docs](https://categorical-mixture.readthedocs.io/en/latest/).
+some other task, for installation and usage, see [the docs](https://categorical-mix.readthedocs.io/en/latest/).
