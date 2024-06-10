@@ -360,7 +360,7 @@ class CategoricalMixture:
             random_state (int): A seed to the random number generator.
         """
         rng = np.random.default_rng(random_state)
-        mix_weights = rng.uniform(size = self.n_components)
+        mix_weights = np.ones((self.n_components))
         mix_weights /= mix_weights.sum()
         mu_mix = rng.uniform(size = (self.n_components, self.sequence_length, \
                 self.num_possible_items))
